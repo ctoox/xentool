@@ -22,7 +22,7 @@ import {
   AIUnavailable,
   cosine,
 } from "../../../packages/core/index.js";
-import { page, card, btn, select, tabs, badge, notice } from "../../../packages/ui/components.js";
+import { page, card, btn, select, tabs, badge, notice, loginCard } from "../../../packages/ui/components.js";
 
 const MAX_CHARS = 12000;
 const MAX_TOKENS = 700;
@@ -50,10 +50,38 @@ export async function handle(request, env = {}, ctx = {}) {
   const publicMode = String(env?.AI_PUBLIC || "").toLowerCase() === "true";
   const allowed = publicMode || (await auth.authorized());
 
+  if (path === "/login" && request.method === "POST") return login(request, auth, basePath);
+  if (path === "/logout" && request.method === "POST") {
+    return new Response(null, {
+      status: 303,
+      headers: { Location: `${basePath}/`, "Set-Cookie": auth.clearedCookie(), ...NO_STORE },
+    });
+  }
+
   if (path === "/" && request.method === "GET") {
     if (wantsHtml) {
+      // A browser can only obtain the signed cookie through a form, so render
+      // the gate before the tool. Without this the page loaded fine and then
+      // every request came back 401 — which reads as "broken", not "locked".
+      if (!publicMode && !allowed) {
+        return html(
+          renderGate({
+            basePath,
+            available: ai.available,
+            configured: auth.configured,
+            error: loginError(url),
+          }),
+          auth.configured ? 401 : 503,
+          NO_STORE,
+        );
+      }
       return html(
-        renderPage({ basePath, available: ai.available, gated: !publicMode, configured: auth.configured }),
+        renderPage({
+          basePath,
+          available: ai.available,
+          gated: !publicMode,
+          configured: auth.configured,
+        }),
         ai.available ? 200 : 503,
         NO_STORE,
       );
@@ -172,6 +200,40 @@ async function readJson(request) {
   }
 }
 
+/* ------------------------------------------------------------------- auth */
+
+async function login(request, auth, basePath) {
+  const type = request.headers.get("content-type") || "";
+  const asJson = type.includes("application/json");
+  const password = asJson
+    ? await request.json().then((body) => body?.password ?? null).catch(() => null)
+    : new URLSearchParams(await request.text()).get("password");
+
+  if (!auth.configured) {
+    return asJson
+      ? json({ error: "ADMIN is not configured" }, 503, NO_STORE)
+      : new Response(null, { status: 303, headers: { Location: `${basePath}/?e=unset`, ...NO_STORE } });
+  }
+  if (!auth.checkPassword(password)) {
+    return asJson
+      ? json({ error: "invalid password" }, 401, NO_STORE)
+      : new Response(null, { status: 303, headers: { Location: `${basePath}/?e=1`, ...NO_STORE } });
+  }
+
+  const cookie = await auth.sessionCookie();
+  if (asJson) return json({ ok: true }, 200, { ...NO_STORE, "Set-Cookie": cookie });
+  return new Response(null, {
+    status: 303,
+    headers: { Location: `${basePath}/`, "Set-Cookie": cookie, ...NO_STORE },
+  });
+}
+
+function loginError(url) {
+  const flag = url.searchParams.get("e");
+  if (!flag) return "";
+  return flag === "unset" ? "ADMIN 尚未配置，口令登录不可用。" : "口令不正确，请重试。";
+}
+
 /* ---------------------------------------------------------------------- UI */
 
 const AI_SCRIPT = String.raw`
@@ -185,7 +247,9 @@ const AI_SCRIPT = String.raw`
     if (!btn) return;
     var name = btn.getAttribute('data-tab');
     var all = tabs.querySelectorAll('[data-tab]');
-    for (var i = 0; i < all.length; i++) all[i].classList.toggle('on', all[i] === btn);
+    // The server renders the first tab as active with x-tab--on; toggling a
+    // second class left both tabs highlighted. Use the same class throughout.
+    for (var i = 0; i < all.length; i++) all[i].classList.toggle('x-tab--on', all[i] === btn);
     ['summary','translate','embed'].forEach(function(key){
       document.getElementById('view-' + key).hidden = key !== name;
     });
@@ -248,6 +312,38 @@ const AI_SCRIPT = String.raw`
 
 const LANG_LABELS = { zh: "中文", en: "英文", ja: "日文", ko: "韩文", fr: "法文", de: "德文", es: "西班牙文", ru: "俄文" };
 const LANG_OPTIONS = LANGS.map((code) => ({ label: LANG_LABELS[code] || code, value: code }));
+
+function renderGate({ basePath, available, configured, error = "" }) {
+  const banner = !available
+    ? notice({
+        tone: "warn",
+        title: "Workers AI 绑定未配置。",
+        body: '在 wrangler.toml 中加上 [ai] binding = "AI" 后重新部署即可启用。',
+      })
+    : "";
+
+  const body = configured
+    ? loginCard({
+        action: `${basePath}/login`,
+        title: "AI 工具",
+        desc: "推理按 token 计费，所以这里需要管理员口令。",
+        error,
+        hint: "口令与短链、SQL、KV 控制台共用同一个 ADMIN 密钥。",
+      })
+    : `${notice({
+        tone: "warn",
+        title: "还没有配置 ADMIN。",
+        body: "AI 接口默认 fail-closed：没有密钥不会放行任何请求。设置 npx wrangler secret put ADMIN，或显式设 AI_PUBLIC=true 开放。",
+      })}`;
+
+  return page({
+    title: "AI 工具",
+    lead: "",
+    body: banner + body,
+    actions: badge({ text: "需要口令", tone: "warn" }),
+    basePath,
+  });
+}
 
 function renderPage({ basePath, available, gated, configured }) {
   const banner = !available
@@ -336,8 +432,14 @@ ${panel(
     title: "AI 工具",
     lead: "摘要、翻译、向量与相似度，全部在 Cloudflare 边缘推理。模型：Llama 3.1 8B / m2m100 / BGE-M3。",
     body,
-    actions: available ? badge({ text: "Workers AI", tone: "accent" }) : badge({ text: "未配置", tone: "off" }),
+    actions: [
+      available ? badge({ text: "Workers AI", tone: "accent" }) : badge({ text: "未配置", tone: "off" }),
+      gated
+        ? `<form method="post" action="${basePath}/logout" style="display:inline">${btn({ label: "退出", variant: "ghost", size: "sm", type: "submit" })}</form>`
+        : "",
+    ].join(""),
     script: AI_SCRIPT,
+    basePath,
   });
 }
 

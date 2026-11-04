@@ -1,5 +1,6 @@
 import { PROTOCOL_VERSION } from "../packages/core/index.js";
-import { TOKENS } from "../packages/ui/theme.js";
+import { TOKENS, BASE_CSS } from "../packages/ui/theme.js";
+import { topbar } from "../packages/ui/components.js";
 import { TOOLKIT, CATEGORIES } from "./toolkit.js";
 import { escapeHtml } from "./portal-page.js";
 
@@ -715,14 +716,115 @@ const CLIENT_JS = String.raw`
     } else {
       panelEl.appendChild(h('p', { class: 'muted', text: '该工具暂未实现。' }));
     }
-    var links = navEl.querySelectorAll('a');
-    for (var j = 0; j < links.length; j++) {
-      links[j].classList.toggle('active', links[j].getAttribute('data-id') === tool.id);
+
+    // Keep both the desktop sidebar and the mobile drawer in sync: the drawer
+    // is the only catalog below 900px, so a stale highlight there means the
+    // user cannot tell which tool they are looking at.
+    var groups = [navEl, document.getElementById('drawer-body')];
+    for (var g = 0; g < groups.length; g++) {
+      if (!groups[g]) continue;
+      var links = groups[g].querySelectorAll('a');
+      for (var j = 0; j < links.length; j++) {
+        var on = links[j].getAttribute('data-id') === tool.id;
+        links[j].classList.toggle('active', on);
+        if (on) links[j].setAttribute('aria-current', 'page');
+        else links[j].removeAttribute('aria-current');
+      }
     }
+
+    var label = document.getElementById('drawer-label');
+    if (label) label.textContent = '工具目录 · ' + tool.name;
   }
 
   function route() {
     render((location.hash || '').replace('#', '') || 'url');
+  }
+
+  // ---- mobile drawer ------------------------------------------------------
+  var drawer = document.getElementById('drawer');
+  var backdrop = document.getElementById('drawer-backdrop');
+  var openBtn = document.getElementById('drawer-open');
+  var closeBtn = document.getElementById('drawer-close');
+  var drawerBody = document.getElementById('drawer-body');
+
+  if (drawer && drawerBody && navEl) {
+    // Clone once at boot: the drawer is a second view of the same list, so
+    // there is no second source of truth to keep in sync. cloneNode keeps the
+    // "no innerHTML with markup" rule intact even though this source is
+    // server-rendered and contains no user data.
+    drawerBody.appendChild(navEl.cloneNode(true));
+
+    var lastFocus = null;
+    function openDrawer() {
+      lastFocus = document.activeElement;
+      drawer.classList.add('open');
+      backdrop.classList.add('open');
+      drawer.setAttribute('aria-hidden', 'false');
+      if (openBtn) openBtn.setAttribute('aria-expanded', 'true');
+      document.body.style.overflow = 'hidden';
+      setBackgroundInert(true);
+      if (closeBtn) closeBtn.focus();
+    }
+    function closeDrawer(restore) {
+      drawer.classList.remove('open');
+      backdrop.classList.remove('open');
+      drawer.setAttribute('aria-hidden', 'true');
+      if (openBtn) openBtn.setAttribute('aria-expanded', 'false');
+      document.body.style.overflow = '';
+      setBackgroundInert(false);
+      if (restore && lastFocus && lastFocus.focus) lastFocus.focus();
+    }
+
+    /*
+     * Take the page behind the drawer out of the tab order and out of the
+     * accessibility tree while it is covered. The focus trap keeps the caret
+     * inside the drawer; this also stops a screen reader from walking into
+     * content the user cannot see. The inert attribute does both at once.
+     */
+    function setBackgroundInert(on) {
+      var background = [document.querySelector('.x-top'), document.querySelector('.wrap')];
+      for (var i = 0; i < background.length; i++) {
+        if (!background[i]) continue;
+        if (on) background[i].setAttribute('inert', '');
+        else background[i].removeAttribute('inert');
+      }
+    }
+
+    // Focus trap. Without it, Tab walks straight out of the drawer into the
+    // page behind it — which is invisible under the backdrop, so a keyboard
+    // user is left tabbing through content they cannot see.
+    function trapFocus(e) {
+      if (e.key !== 'Tab' || !drawer.classList.contains('open')) return;
+      var focusable = Array.prototype.slice.call(
+        drawer.querySelectorAll('a[href], button:not([disabled]), input, select, textarea, [tabindex]:not([tabindex="-1"])')
+      ).filter(function(el){
+        var r = el.getBoundingClientRect();
+        return r.width > 0 && r.height > 0;
+      });
+      if (!focusable.length) return;
+      var first = focusable[0];
+      var last = focusable[focusable.length - 1];
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    }
+
+    if (openBtn) openBtn.addEventListener('click', openDrawer);
+    if (closeBtn) closeBtn.addEventListener('click', function(){ closeDrawer(true); });
+    if (backdrop) backdrop.addEventListener('click', function(){ closeDrawer(true); });
+
+    drawerBody.addEventListener('click', function(e){
+      if (e.target.closest('a')) closeDrawer(false);
+    });
+
+    document.addEventListener('keydown', function(e){
+      if (e.key === 'Escape' && drawer.classList.contains('open')) closeDrawer(true);
+      else trapFocus(e);
+    });
   }
 
   window.addEventListener('hashchange', route);
@@ -742,17 +844,17 @@ export function renderToolsPage({
     const items = TOOLKIT.filter((tool) => tool.category === cat.id)
       .map(
         (tool) =>
-          `<a href="#${escapeHtml(tool.id)}" data-id="${escapeHtml(tool.id)}">${escapeHtml(tool.name)}</a>`,
+          `<a href="#${escapeHtml(tool.id)}" data-id="${escapeHtml(tool.id)}"><span>${escapeHtml(tool.name)}</span></a>`,
       )
       .join("");
-    return `<div class="group"><div class="group-name">${escapeHtml(cat.name)}</div>${items}</div>`;
+    return `<div class="group"><h2 class="group-name">${escapeHtml(cat.name)}</h2>${items}</div>`;
   }).join("");
 
   return `<!doctype html>
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="color-scheme" content="dark">
 <meta name="theme-color" content="#06070a">
 <title>工具台 · ${brand}</title>
@@ -760,42 +862,39 @@ export function renderToolsPage({
 <link rel="alternate icon" href="/favicon.ico">
 <style>
 ${TOKENS}
+${BASE_CSS}
 *{box-sizing:border-box}
 html,body{margin:0;min-height:100%}
-body{background:var(--bg);color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;-webkit-font-smoothing:antialiased;line-height:1.55}
+body{background:var(--bg);color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;-webkit-font-smoothing:antialiased;line-height:1.55;overflow-x:hidden}
 .aura{position:fixed;inset:0;z-index:0;pointer-events:none;overflow:hidden}
 .aura span{position:absolute;border-radius:50%;filter:blur(90px);opacity:.42}
 .aura .a1{width:460px;height:460px;left:-160px;top:-160px;background:rgba(34,211,238,.30)}
 .aura .a2{width:420px;height:420px;right:-140px;top:-100px;background:rgba(167,139,250,.26)}
-.top{position:sticky;top:0;z-index:5;backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);background:rgba(6,7,10,.6);border-bottom:1px solid var(--line)}
-.top-in{max-width:1120px;margin:0 auto;padding:14px 24px;display:flex;align-items:center;justify-content:space-between;gap:16px}
-.logo{display:flex;align-items:center;gap:10px;font-size:15px;font-weight:600;color:var(--ink);text-decoration:none}
-.logo .badge{width:26px;height:26px;border-radius:8px;background:linear-gradient(135deg,var(--cyan),var(--violet));display:grid;place-items:center;color:#06070a;font:700 12px ui-monospace,monospace}
-.back{font-size:13px;color:var(--dim);text-decoration:none;transition:color .18s}
-.back:hover{color:var(--cyan)}
-.wrap{position:relative;z-index:1;max-width:1120px;margin:0 auto;padding:32px 24px 72px;display:grid;grid-template-columns:230px 1fr;gap:32px;align-items:start}
-nav{position:sticky;top:76px;display:flex;flex-direction:column;gap:22px}
-.group-name{font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--dim);margin:0 0 8px 10px}
-nav a{display:block;padding:8px 10px;border-radius:8px;color:var(--dim);text-decoration:none;font-size:13.5px;transition:background .16s,color .16s}
-nav a:hover{background:rgba(255,255,255,.05);color:var(--ink)}
-nav a.active{background:rgba(34,211,238,.12);color:var(--cyan)}
+.wrap{position:relative;z-index:1;max-width:var(--content);margin:0 auto;padding:26px 24px 72px;display:grid;grid-template-columns:var(--sidebar) minmax(0,1fr);gap:28px;align-items:start}
+nav{position:sticky;top:calc(var(--nav-h) + 16px);display:flex;flex-direction:column;gap:16px;max-height:calc(100dvh - var(--nav-h) - 32px);overflow-y:auto;scrollbar-width:thin}
+.group-name{font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--dim);margin:0 0 6px 10px;font-weight:500}
+nav a{display:flex;align-items:center;min-height:36px;padding:0 11px;border-left:2px solid transparent;border-radius:0 8px 8px 0;color:var(--dim);text-decoration:none;font-size:13.5px;transition:background .16s var(--ease),color .16s var(--ease),border-color .16s var(--ease)}
+nav a:hover{background:var(--surface-2);color:var(--ink)}
+nav a.active{background:rgba(34,211,238,.11);border-left-color:var(--cyan);color:var(--cyan);font-weight:550}
+nav a:focus-visible{outline:2px solid var(--cyan);outline-offset:-2px}
 main{min-width:0}
-h1{margin:0;font-size:24px;font-weight:600;letter-spacing:-.02em}
-.desc{margin:6px 0 24px;color:var(--dim);font-size:13.5px}
+h1{margin:0;font-size:23px;font-weight:600;letter-spacing:-.02em}
+.desc{margin:6px 0 22px;color:var(--dim);font-size:13.5px}
 .block{margin-bottom:18px}
 .label{font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--dim);margin-bottom:7px}
-.area,.input{width:100%;background:rgba(255,255,255,.04);border:1px solid var(--line);border-radius:10px;color:var(--ink);font-size:13.5px;padding:11px 13px;outline:none;transition:border-color .18s,box-shadow .18s;font-family:inherit}
+.area,.input{width:100%;background:rgba(255,255,255,.04);border:1px solid var(--line-2);border-radius:10px;color:var(--ink);font-size:var(--field-fs);padding:11px 13px;outline:none;transition:border-color .18s,box-shadow .18s;font-family:inherit}
 .area{resize:vertical;min-height:120px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;line-height:1.6}
 .input.short{width:auto;min-width:120px}
 .area:focus,.input:focus{border-color:rgba(34,211,238,.5);box-shadow:0 0 0 4px rgba(34,211,238,.09)}
 .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin:12px 0}
-.btn{appearance:none;border:1px solid var(--line);background:rgba(255,255,255,.05);color:var(--ink);padding:8px 15px;border-radius:9px;font-size:13px;cursor:pointer;transition:background .16s,border-color .16s,transform .1s}
-.btn:hover{background:rgba(255,255,255,.1);border-color:var(--line-2,rgba(255,255,255,.16))}
+.btn{appearance:none;border:1px solid var(--line-2);background:var(--surface-2);color:var(--ink);padding:0 15px;height:36px;border-radius:9px;font-size:13px;cursor:pointer;transition:background .16s,border-color .16s,transform .1s;display:inline-flex;align-items:center;justify-content:center;gap:7px}
+.btn:hover{background:var(--surface-3);border-color:rgba(255,255,255,.22)}
 .btn:active{transform:translateY(1px)}
-.btn.primary{background:linear-gradient(135deg,rgba(34,211,238,.9),rgba(167,139,250,.9));border-color:transparent;color:#06070a;font-weight:600}
-.btn.primary:hover{filter:brightness(1.06)}
+.btn:focus-visible{outline:none;box-shadow:var(--sh-glow);border-color:rgba(34,211,238,.5)}
+.btn.primary{background:linear-gradient(135deg,#22d3ee,#a78bfa);border-color:transparent;color:#05070b;font-weight:650;box-shadow:0 6px 18px -10px rgba(34,211,238,.85)}
+.btn.primary:hover{filter:brightness(1.07)}
 .out{background:rgba(0,0,0,.35);border:1px solid var(--line);border-radius:10px;padding:13px;font:12.5px/1.65 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:#cfd3dc;white-space:pre-wrap;word-break:break-all;min-height:44px;margin:0;max-height:340px;overflow:auto}
-.swatch{width:38px;height:38px;border-radius:9px;border:1px solid var(--line);background:#22d3ee}
+.swatch{width:38px;height:38px;border-radius:9px;border:1px solid var(--line);background:#22d3ee;flex:none}
 .md-split{display:grid;grid-template-columns:1fr 1fr;gap:14px}
 .md-split textarea{min-height:300px}
 .md{border:1px solid var(--line);border-radius:10px;background:rgba(0,0,0,.25);padding:16px;min-height:300px;max-height:520px;overflow:auto;font-size:13.5px;line-height:1.7}
@@ -809,26 +908,69 @@ h1{margin:0;font-size:24px;font-weight:600;letter-spacing:-.02em}
 .md blockquote{margin:0 0 10px;padding:6px 0 6px 14px;border-left:2px solid rgba(34,211,238,.45);color:var(--dim)}
 .md hr{border:0;border-top:1px solid var(--line);margin:16px 0}
 .md a{color:var(--cyan)}
-@media (max-width:760px){.md-split{grid-template-columns:1fr}}
 .muted{color:var(--dim);font-size:13px}
-@media (max-width:760px){.wrap{grid-template-columns:1fr;gap:20px;padding:20px 16px 56px}nav{position:static;flex-direction:row;overflow-x:auto;gap:8px;padding-bottom:8px}nav .group{display:flex;gap:6px;align-items:center}.group-name{display:none}nav a{white-space:nowrap}h1{font-size:20px}}
+
+/* Mobile catalog: a 240px sidebar cannot survive 100+ tools next to a 320px
+   viewport, and a horizontal strip of every tool is unusable at that count.
+   Below 900px the sidebar becomes a drawer opened from a single button. */
+.drawer-btn{display:none}
+.drawer-backdrop{display:none;position:fixed;inset:0;z-index:40;background:rgba(0,0,0,.55);backdrop-filter:blur(2px);opacity:0;transition:opacity .2s var(--ease)}
+.drawer-backdrop.open{display:block;opacity:1}
+.drawer{position:fixed;top:0;left:0;bottom:0;z-index:41;width:min(88vw,340px);transform:translateX(-100%);transition:transform .24s var(--ease);background:var(--bg-elev);border-right:1px solid var(--line);display:flex;flex-direction:column}
+.drawer.open{transform:none}
+.drawer__head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 16px;border-bottom:1px solid var(--line);flex:none}
+.drawer__title{font-size:13px;font-weight:600;letter-spacing:.02em}
+.drawer__close{appearance:none;width:var(--tap);height:var(--tap);display:grid;place-items:center;border:1px solid var(--line);border-radius:9px;background:var(--surface);color:var(--ink-2);cursor:pointer;flex:none}
+.drawer__close svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round}
+.drawer__body{flex:1;overflow-y:auto;padding:14px 10px 24px;display:flex;flex-direction:column;gap:16px}
+.drawer__body a{min-height:var(--tap)}
+@media (max-width:900px){
+  .wrap{grid-template-columns:minmax(0,1fr);gap:18px;padding:18px 16px 56px}
+  nav{display:none}
+  /* The drawer holds a clone of the sidebar, so it must override the rule
+     above — otherwise the drawer opens to an empty panel on every phone. */
+  .drawer__body nav{display:flex;position:static;max-height:none;overflow:visible}
+  .drawer-btn{display:inline-flex;align-items:center;gap:8px;height:var(--tap);padding:0 14px;border:1px solid var(--line-2);border-radius:10px;background:var(--surface);color:var(--ink);font:500 13px/1 inherit;cursor:pointer;margin:0 0 16px;max-width:100%}
+  .drawer-btn svg{width:15px;height:15px;flex:none;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round}
+  .drawer-btn span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .md-split{grid-template-columns:1fr}
+  h1{font-size:20px}
+}
+@media (max-width:640px){
+  .md-split textarea,.md{min-height:220px}
+}
+@media (pointer:coarse){
+  .btn{height:var(--tap);padding:0 16px}
+  .btn.primary{height:var(--tap)}
+}
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}
 </style>
 </head>
 <body>
 <div class="aura" aria-hidden="true"><span class="a1"></span><span class="a2"></span></div>
-<div class="top"><div class="top-in">
-  <a class="logo" href="/"><span class="badge" aria-hidden="true">X</span>${brand}</a>
-  <a class="back" href="/">← 返回工具库</a>
-</div></div>
+${topbar({ brand, back: "/", backLabel: "返回工具库" })}
 <div class="wrap">
-  <nav id="nav">${nav}</nav>
+  <nav id="nav" aria-label="工具目录">${nav}</nav>
   <main>
+    <button class="drawer-btn" id="drawer-open" type="button" aria-expanded="false" aria-controls="drawer">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+      <span id="drawer-label">工具目录</span>
+    </button>
     <h1 id="title">工具台</h1>
     <p class="desc" id="desc">所有计算在浏览器本地完成，不上传、不记录。</p>
     <div id="panel"></div>
   </main>
 </div>
+<div class="drawer-backdrop" id="drawer-backdrop"></div>
+<aside class="drawer" id="drawer" role="dialog" aria-modal="true" aria-label="工具目录" aria-hidden="true">
+  <div class="drawer__head">
+    <span class="drawer__title">工具目录</span>
+    <button class="drawer__close" id="drawer-close" type="button" aria-label="关闭目录">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+  </div>
+  <div class="drawer__body" id="drawer-body"></div>
+</aside>
 <script id="meta" type="application/json">${metaJson}</script>
 <script>${CLIENT_JS}</script>
 </body>

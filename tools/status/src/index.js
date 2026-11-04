@@ -152,6 +152,7 @@ ${notice({
     lead: `${ready} / ${rows.length} 个 Cloudflare 能力已就绪。缺失的能力不会让站点崩溃，对应的工具会返回明确的 503 并说明缺哪一行配置。`,
     body,
     wide: true,
+    basePath,
   });
 }
 

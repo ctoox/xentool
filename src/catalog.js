@@ -33,6 +33,11 @@ export const CATALOG = [
     href: `/tools#${tool.id}`,
     host: "",
     status: "available",
+    // `category` is the display group; the portal filters on it. Deriving it
+    // from toolkit.js keeps the catalog and the category chips in sync — a
+    // hardcoded id→group table in the portal would silently dump every new
+    // tool into "其他".
+    category: categoryName(tool.category),
     tags: [categoryName(tool.category)],
   })),
   {
@@ -43,6 +48,7 @@ export const CATALOG = [
     href: "/ai/",
     host: "",
     status: "available",
+    category: "边缘能力",
     tags: ["Workers AI", "推理"],
   },
   {
@@ -53,6 +59,7 @@ export const CATALOG = [
     href: "/paste/",
     host: "paste.xen.autos",
     status: "available",
+    category: "存储",
     tags: ["KV", "存储"],
   },
   {
@@ -63,6 +70,7 @@ export const CATALOG = [
     href: "/s/",
     host: "",
     status: "available",
+    category: "存储",
     tags: ["KV", "存储"],
   },
   {
@@ -73,6 +81,7 @@ export const CATALOG = [
     href: "/file/",
     host: "",
     status: "available",
+    category: "边缘能力",
     tags: ["R2", "对象存储"],
   },
   {
@@ -83,6 +92,7 @@ export const CATALOG = [
     href: "/hit/",
     host: "",
     status: "available",
+    category: "边缘能力",
     tags: ["Durable Objects", "计数"],
   },
   {
@@ -93,6 +103,7 @@ export const CATALOG = [
     href: "/room/",
     host: "",
     status: "available",
+    category: "边缘能力",
     tags: ["Durable Objects", "WebSocket"],
   },
   {
@@ -103,6 +114,7 @@ export const CATALOG = [
     href: "/sql/",
     host: "",
     status: "available",
+    category: "边缘能力",
     tags: ["D1", "数据库"],
   },
   {
@@ -113,6 +125,7 @@ export const CATALOG = [
     href: "/kv/",
     host: "",
     status: "available",
+    category: "边缘能力",
     tags: ["KV", "运维"],
   },
   {
@@ -123,6 +136,7 @@ export const CATALOG = [
     href: "/status/",
     host: "",
     status: "available",
+    category: "边缘能力",
     tags: ["运维", "自检"],
   },
   {
@@ -133,6 +147,7 @@ export const CATALOG = [
     href: "/vector/",
     host: "",
     status: "planned",
+    category: "边缘能力",
     tags: ["Vectorize"],
   },
 ];
@@ -147,6 +162,7 @@ export function portalTools() {
     href: tool.href || `${tool.path}/`,
     host: tool.host,
     status: tool.status,
+    category: tool.category || "其他",
     tags: tool.tags || [],
   }));
 }

@@ -31,6 +31,7 @@ import {
 import { escapeHtml } from "../../../packages/ui/shell.js";
 import {
   page,
+  shell,
   card,
   btn,
   select,
@@ -371,12 +372,12 @@ function renderLogin({ basePath, configured, error = "" }) {
       icon: "lock",
       title: "还没有配置 ADMIN",
       desc: "短链的创建与管理需要管理员口令。在项目目录执行 npx wrangler secret put ADMIN，然后重新访问本页。",
-      action: btn({ label: "查看平台能力", href: "/status/", variant: "ghost" }),
+      action: btn({ label: "查看平台能力", href: `${basePath}/status/`, variant: "ghost" }),
     })}
 <div style="margin-top:16px">
 ${notice({ tone: "warn", title: "管理面 fail-closed。", body: "没有密钥时不会放行任何请求，这是刻意的行为。" })}
 </div>`;
-    return page({ title: "短链", lead: "", body });
+    return page({ title: "短链", lead: "", body, basePath });
   }
 
   const body = loginCard({
@@ -386,7 +387,7 @@ ${notice({ tone: "warn", title: "管理面 fail-closed。", body: "没有密钥�
     error,
     hint: "口令与 KV、SQL 控制台共用同一个 ADMIN 密钥。",
   });
-  return page({ title: "短链", lead: "", body });
+  return page({ title: "短链", lead: "", body, basePath });
 }
 
 async function renderConsole({ store, host, basePath }) {
@@ -411,7 +412,7 @@ ${card({
   title: "生成短链",
   sub: `存储 backend：${store.backend === "kv" ? "kv（持久）" : "memory（不持久，仅测试）"}`,
   body: `
-    <input class="x-input x-mono" id="target" placeholder="https://example.com/very/long/path?utm=..." spellcheck="false" autocomplete="off" style="height:48px;font-size:14px">
+    <input class="x-input x-mono" id="target" placeholder="https://example.com/very/long/path?utm=..." spellcheck="false" autocomplete="off" style="height:48px">
     <div class="x-row" style="margin-top:12px">
       ${select({ label: "有效期", id: "ttl", options: TTL_OPTIONS, value: 0 })}
       <span class="x-toolbar__spacer"></span>
@@ -556,6 +557,7 @@ ${card({
     body,
     actions: badge({ text: "ADMIN", tone: "accent" }),
     script: script + copyLinkScript({ inputId: "short" }),
+    basePath,
     wide: true,
   });
 }
@@ -566,13 +568,13 @@ function formatDate(ms) {
 }
 
 function renderMissing({ basePath, code }) {
-  const body = `
-<div class="empty">
-  <h2>短链不存在或已过期</h2>
-  <p><code>${escapeHtml(code || "")}</code> 没有对应的目标地址。</p>
-  <p><a class="btn" href="${escapeHtml(basePath)}/">打开控制台</a></p>
-</div>`;
-  return shell({ title: "短链", body, basePath, script: "", style: SHORT_CSS });
+  const body = `${emptyState({
+    icon: "inbox",
+    title: "短链不存在或已过期",
+    desc: `${code || ""} 没有对应的目标地址。可能是过期了，或者被手动删除了。`,
+    action: btn({ label: "打开控制台", href: `${basePath}/`, variant: "primary" }),
+  })}`;
+  return shell({ title: "短链", body, basePath, script: "" });
 }
 
 export default {

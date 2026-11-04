@@ -1,5 +1,6 @@
 import { PROTOCOL_VERSION } from "../packages/core/index.js";
-import { TOKENS } from "../packages/ui/theme.js";
+import { TOKENS, BASE_CSS } from "../packages/ui/theme.js";
+import { topbar, toolCard, chips } from "../packages/ui/components.js";
 
 export function escapeHtml(value) {
   return String(value ?? "")
@@ -60,10 +61,19 @@ function iconSvg(id) {
 }
 
 /**
+ * Preferred order for the category chips. Anything not listed still shows up,
+ * appended after these — ordering is a presentation concern, membership is not.
+ */
+const CATEGORY_ORDER = ["边缘能力", "存储", "编码转换", "开发辅助", "网络", "文本处理"];
+
+/**
  * Renders the portal as a complete, self-contained HTML document.
- * No external CSS, fonts, scripts or images: the page stays intact even if
- * every other endpoint is down. The inline script only enhances the page
- * (search filter, pointer glow, card tilt, health pill).
+ *
+ * Every tool is in the DOM. Paging would fight the search box (you cannot
+ * filter what you did not render) and 100+ cards is still a few hundred KB of
+ * inline markup that gzips well. What does not scale is *finding*: hence the
+ * category chips, the count, and a card/list toggle that halves the height of
+ * each entry on small screens.
  */
 export function renderPortal({
   tools = [],
@@ -71,160 +81,172 @@ export function renderPortal({
   site = {},
   protocol = PROTOCOL_VERSION,
 } = {}) {
-  const brand = escapeHtml(site.name || "itools");
+  const brand = escapeHtml(site.name || "xentool");
   const tagline = escapeHtml(site.tagline || "AI 工具库");
   const lead = escapeHtml(site.description || "一个入口，聚合边缘侧的 AI 工具。无需安装，打开即用。");
   const live = tools.filter((tool) => tool.status === "available").length;
 
-  const cards = tools
-    .map((tool, index) => {
-      const available = tool.status === "available";
-      const name = escapeHtml(tool.name || tool.id);
-      const desc = escapeHtml(tool.description || "");
-      const href = escapeHtml(tool.href || tool.path || "/");
-      const tags = (tool.tags || [])
-        .map((tag) => `<span class="tag">${escapeHtml(tag)}</span>`)
-        .join("");
-      const searchText = escapeHtml(
-        [tool.id, tool.name, tool.description, ...(tool.tags || [])].join(" ").toLowerCase(),
-      );
-      const statusLabel = available ? "已上线" : "即将上线";
+  const withCategory = tools.map((tool) => ({
+    ...tool,
+    category: tool.category || "其他",
+  }));
 
-      const inner = `<span class="glow" aria-hidden="true"></span>
-        <div class="card-top">
-          <span class="icon">${iconSvg(tool.id)}</span>
-          <span class="state${available ? " on" : ""}"><i aria-hidden="true"></i>${statusLabel}</span>
-        </div>
-        <h3>${name}</h3>
-        <p>${desc}</p>
-        <div class="card-foot">
-          <div class="tags">${tags}</div>
-          <span class="arrow" aria-hidden="true">→</span>
-        </div>`;
+  const counts = new Map();
+  for (const tool of withCategory) counts.set(tool.category, (counts.get(tool.category) || 0) + 1);
+  const chipItems = CATEGORY_ORDER.filter((name) => counts.has(name))
+    .concat([...counts.keys()].filter((name) => !CATEGORY_ORDER.includes(name)))
+    .map((name) => ({ id: name, name, count: counts.get(name) }));
 
-      const tag = available ? "a" : "div";
-      const attrs = available ? ` href="${href}"` : "";
-
-      return `<${tag} class="card${available ? "" : " soon"}"${attrs} data-search="${searchText}" style="--i:${index}">${inner}</${tag}>`;
-    })
+  const cards = withCategory
+    .map(
+      (tool, index) =>
+        // Cap the stagger: at 100 tools an unbounded delay means the last card
+        // appears six seconds after load, which reads as "broken", not "polished".
+        `<div class="x-stagger" style="--i:${Math.min(index, 11)}">${toolCard(tool, {
+          icon: iconSvg(tool.id),
+        })}</div>`,
+    )
     .join("");
 
   return `<!doctype html>
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="color-scheme" content="dark">
 <meta name="theme-color" content="#06070a">
 <title>${brand} · ${tagline}</title>
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="alternate icon" href="/favicon.ico">
 <style>
-${TOKENS}:root{--mx:50%;--my:30%}
+${TOKENS}
+${BASE_CSS}
 *{box-sizing:border-box}
 html,body{margin:0;min-height:100%}
 body{background:var(--bg);color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;-webkit-font-smoothing:antialiased;line-height:1.55;overflow-x:hidden}
-body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;background:radial-gradient(520px circle at var(--mx) var(--my),rgba(34,211,238,.10),transparent 62%)}
+body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;background:radial-gradient(520px circle at var(--mx,50%) var(--my,30%),rgba(34,211,238,.09),transparent 62%)}
 .aura{position:fixed;inset:0;z-index:0;pointer-events:none;overflow:hidden}
-.aura span{position:absolute;border-radius:50%;filter:blur(90px);opacity:.62}
-.aura .a1{width:520px;height:520px;left:-140px;top:-180px;background:rgba(34,211,238,.28)}
-.aura .a2{width:460px;height:460px;right:-120px;top:-120px;background:rgba(167,139,250,.26)}
-.aura .a3{width:520px;height:520px;left:38%;top:44%;background:rgba(244,114,182,.14)}
-.grid{position:fixed;inset:0;z-index:0;pointer-events:none;background-image:linear-gradient(rgba(255,255,255,.045) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.045) 1px,transparent 1px);background-size:44px 44px;mask-image:radial-gradient(760px circle at 50% 0%,#000 12%,transparent 78%);-webkit-mask-image:radial-gradient(760px circle at 50% 0%,#000 12%,transparent 78%)}
-.wrap{position:relative;z-index:1;max-width:1080px;margin:0 auto;padding:0 24px 72px}
-nav{position:sticky;top:0;z-index:5;display:flex;align-items:center;justify-content:space-between;gap:16px;padding:16px 0;backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);background:rgba(6,7,10,.55);border-bottom:1px solid var(--line)}
-.logo{display:flex;align-items:center;gap:10px;font-weight:600;letter-spacing:-.01em;font-size:15px}
-.logo .badge{width:26px;height:26px;border-radius:8px;background:linear-gradient(135deg,var(--cyan),var(--violet));display:grid;place-items:center;color:#06070a;font:700 12px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
-.nav-links{display:flex;align-items:center;gap:18px;font-size:13px}
-.nav-links a{color:var(--dim);text-decoration:none;transition:color .18s}
-.nav-links a:hover{color:var(--ink)}
-.pill{display:inline-flex;align-items:center;gap:7px;padding:6px 12px;border:1px solid var(--line);border-radius:999px;font-size:12px;color:var(--dim);background:rgba(255,255,255,.03)}
+.aura span{position:absolute;border-radius:50%;filter:blur(90px);opacity:.55}
+.aura .a1{width:520px;height:520px;left:-140px;top:-180px;background:rgba(34,211,238,.26)}
+.aura .a2{width:460px;height:460px;right:-120px;top:-120px;background:rgba(167,139,250,.24)}
+.aura .a3{width:520px;height:520px;left:38%;top:44%;background:rgba(244,114,182,.12)}
+.wrap{position:relative;z-index:1;max-width:var(--content);margin:0 auto;padding:0 24px 72px}
+.nav-links{display:flex;align-items:center;gap:6px;font-size:13px}
+.nav-links a{display:inline-flex;align-items:center;height:34px;padding:0 11px;border-radius:8px;color:var(--dim);text-decoration:none;transition:color .18s var(--ease),background .18s var(--ease)}
+.nav-links a:hover{color:var(--ink);background:var(--surface-2)}
+.pill{display:inline-flex;align-items:center;gap:7px;height:34px;padding:0 12px;border:1px solid var(--line);border-radius:999px;font-size:12px;color:var(--dim);background:var(--surface)}
 .pill i{width:6px;height:6px;border-radius:50%;background:var(--cyan);box-shadow:0 0 0 3px rgba(34,211,238,.16);animation:pulse 2.4s ease-in-out infinite}
-.hero{padding:72px 0 40px;text-align:center}
-.kicker{display:inline-flex;align-items:center;gap:8px;padding:6px 14px;border:1px solid var(--line);border-radius:999px;font-size:12px;color:var(--dim);background:rgba(255,255,255,.03)}
+.pill--down i{background:var(--danger);box-shadow:0 0 0 3px rgba(251,113,133,.18);animation:none}
+.hero{padding:64px 0 28px;text-align:center}
+.kicker{display:inline-flex;align-items:center;gap:8px;padding:6px 14px;border:1px solid var(--line);border-radius:999px;font-size:12px;color:var(--dim);background:var(--surface)}
 .kicker b{color:var(--cyan);font-weight:500}
-h1{margin:22px 0 0;font-size:clamp(38px,7vw,68px);line-height:1.04;letter-spacing:-.04em;font-weight:600}
+h1{margin:20px 0 0;font-size:clamp(34px,6.4vw,60px);line-height:1.05;letter-spacing:-.04em;font-weight:600}
 h1 .grad{background:linear-gradient(96deg,var(--cyan) 0%,var(--violet) 46%,var(--pink) 96%);-webkit-background-clip:text;background-clip:text;color:transparent}
-.lead{margin:18px auto 0;max-width:520px;color:var(--dim);font-size:15px}
-.search{margin:32px auto 0;max-width:420px;position:relative}
-.search svg{position:absolute;left:14px;top:50%;transform:translateY(-50%);width:16px;height:16px;color:var(--dim);pointer-events:none}
-.search input{width:100%;padding:13px 16px 13px 40px;border-radius:12px;border:1px solid var(--line);background:rgba(255,255,255,.04);color:var(--ink);font-size:14px;outline:none;transition:border-color .2s,box-shadow .2s}
-.search input::placeholder{color:#6b7183}
-.search input:focus{border-color:rgba(34,211,238,.5);box-shadow:0 0 0 4px rgba(34,211,238,.10)}
-.stats{display:flex;justify-content:center;gap:28px;margin:28px 0 0;flex-wrap:wrap}
-.stat{text-align:center}
-.stat b{display:block;font-size:20px;font-weight:600;letter-spacing:-.02em}
-.stat span{font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--dim)}
-.section{display:flex;align-items:center;justify-content:space-between;margin:44px 0 18px;gap:16px}
-.section h2{margin:0;font-size:13px;letter-spacing:.14em;text-transform:uppercase;color:var(--dim);font-weight:500}
-.section .count{font-size:12px;color:var(--dim);font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
-.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(258px,1fr));gap:16px}
-.card{position:relative;display:flex;flex-direction:column;gap:12px;padding:20px;border-radius:16px;border:1px solid var(--line);background:linear-gradient(180deg,rgba(255,255,255,.055),rgba(255,255,255,.018));color:inherit;text-decoration:none;overflow:hidden;transform:perspective(900px) rotateX(var(--rx,0deg)) rotateY(var(--ry,0deg));transition:transform .18s ease,border-color .2s ease,box-shadow .25s ease;animation:rise .55s cubic-bezier(.22,.7,.3,1) both;animation-delay:calc(var(--i,0) * 65ms)}
-.card .glow{position:absolute;inset:-40% 40% 55% -40%;background:radial-gradient(circle at 30% 30%,rgba(34,211,238,.35),transparent 62%);opacity:0;transition:opacity .3s;pointer-events:none}
-a.card:hover{border-color:rgba(34,211,238,.42);box-shadow:0 18px 44px -18px rgba(34,211,238,.5),inset 0 1px 0 rgba(255,255,255,.08)}
-a.card:hover .glow{opacity:1}
-a.card:hover .arrow{transform:translateX(3px);color:var(--cyan)}
-a.card:focus-visible{outline:2px solid var(--cyan);outline-offset:3px}
-.card.soon{opacity:.72}
-.card.soon:hover{opacity:.9}
-.card.hidden{display:none}
-.card-top{display:flex;align-items:center;justify-content:space-between;gap:12px}
-.icon{width:38px;height:38px;border-radius:11px;display:grid;place-items:center;color:var(--cyan);background:rgba(34,211,238,.10);border:1px solid rgba(34,211,238,.22)}
-.icon svg{width:19px;height:19px}
-.state{display:inline-flex;align-items:center;gap:6px;font-size:11px;color:var(--dim);white-space:nowrap}
-.state i{width:5px;height:5px;border-radius:50%;background:#5b6070}
-.state.on{color:rgba(34,211,238,.9)}
-.state.on i{background:var(--cyan);box-shadow:0 0 8px rgba(34,211,238,.9)}
-.card h3{margin:2px 0 0;font-size:16px;font-weight:600;letter-spacing:-.01em}
-.card p{margin:0;font-size:13px;line-height:1.6;color:var(--dim);min-height:42px}
-.card-foot{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:2px}
-.tags{display:flex;gap:6px;flex-wrap:wrap}
-.tag{font:11px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;padding:3px 8px;border-radius:6px;border:1px solid var(--line);color:var(--dim);background:rgba(255,255,255,.03)}
-.arrow{color:var(--dim);font-size:15px;transition:transform .18s,color .18s}
-.card.soon .arrow{display:none}
-.empty{display:none;padding:40px 0;text-align:center;color:var(--dim);font-size:13px}
-footer{margin-top:56px;padding-top:22px;border-top:1px solid var(--line);display:flex;flex-wrap:wrap;gap:14px;justify-content:space-between;align-items:center;font-size:12px;color:var(--dim)}
-footer .meta{display:flex;gap:16px;flex-wrap:wrap;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
-footer a{color:var(--dim);text-decoration:none;transition:color .18s}
-footer a:hover{color:var(--cyan)}
-@keyframes rise{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:translateY(0)}}
+.hero p.lead{margin:16px auto 0;max-width:560px;color:var(--dim);font-size:14.5px;line-height:1.65}
+.hero-stats{display:flex;justify-content:center;gap:26px;margin:22px 0 0;flex-wrap:wrap}
+.hero-stat b{display:block;font-size:19px;font-weight:600;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
+.hero-stat span{font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--dim)}
+.catalog-head{display:flex;align-items:center;justify-content:space-between;gap:14px;margin:34px 0 12px;flex-wrap:wrap}
+.catalog-head h2{margin:0;font-size:12.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--dim);font-weight:500}
+.catalog-tools{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.catalog-tools .x-search{position:relative;width:230px}
+.catalog-tools .x-search svg{position:absolute;left:11px;top:50%;transform:translateY(-50%);width:14px;height:14px;fill:none;stroke:var(--dim);stroke-width:1.9;stroke-linecap:round;pointer-events:none}
+.catalog-tools .x-search input{width:100%;height:34px;padding:0 12px 0 33px;border:1px solid var(--line-2);border-radius:9px;background:rgba(0,0,0,.3);color:var(--ink);font-size:var(--field-fs);outline:none;transition:border-color .16s var(--ease),box-shadow .16s var(--ease)}
+.catalog-tools .x-search input:focus{border-color:rgba(34,211,238,.55);box-shadow:var(--sh-glow)}
+.catalog-tools .x-search input::placeholder{color:var(--hint)}
+.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,230px),1fr));gap:14px}
+.x-stagger{animation:rise .5s cubic-bezier(.22,.7,.3,1) both;animation-delay:calc(var(--i,0) * 26ms)}
+.x-stagger.hidden{display:none}
+.empty{margin:44px 0;text-align:center;color:var(--dim);font-size:13px;display:none}
+.empty.show{display:block}
+.empty b{display:block;color:var(--ink);font-size:15px;margin-bottom:6px}
+footer{margin-top:52px;padding-top:20px;border-top:1px solid var(--line);display:flex;flex-wrap:wrap;gap:12px;justify-content:space-between;align-items:center;font-size:12px;color:var(--dim)}
+footer .meta{display:flex;gap:6px;flex-wrap:wrap;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+footer a{display:inline-flex;align-items:center;min-height:32px;padding:0 8px;border-radius:7px;color:var(--dim);text-decoration:none;transition:color .18s,background .18s}
+footer a:hover{color:var(--cyan);background:var(--surface-2)}
+footer a:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
+@keyframes rise{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
-@media (prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}.card{transform:none!important}}
-@media (max-width:640px){.wrap{padding:0 16px 56px}.hero{padding:48px 0 28px}.nav-links .hide-sm{display:none}.stats{gap:20px}}
+@media (max-width:900px){
+  .wrap{padding:0 20px 64px}
+  .hero{padding:44px 0 22px}
+  .catalog-tools .x-search{width:100%}
+  .catalog-tools{width:100%}
+  .catalog-tools .x-search{order:2;flex:1 1 100%}
+}
+@media (max-width:640px){
+  .wrap{padding:0 16px 56px}
+  .hero{padding:34px 0 18px}
+  .nav-links a{padding:0 9px}
+  .nav-links .hide-sm{display:none}
+  .hero-stats{gap:18px}
+  .catalog-head{margin:26px 0 10px;gap:10px}
+  .catalog-tools .x-search input{height:var(--tap)}
+  .cards{grid-template-columns:1fr;gap:10px}
+  .x-view-toggle button{height:36px}
+  footer{font-size:11.5px}
+  footer a{min-height:var(--tap)}
+}
+@media (pointer:coarse){
+  .x-view-toggle button{height:var(--tap);padding:0 13px}
+  .nav-links a{height:var(--tap)}
+  .pill{height:var(--tap)}
+}
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation:none!important;transition:none!important}
+  .x-tool-card:hover{transform:none}
+}
 </style>
 </head>
 <body>
 <div class="aura" aria-hidden="true"><span class="a1"></span><span class="a2"></span><span class="a3"></span></div>
-<div class="grid" aria-hidden="true"></div>
+${topbar({
+  brand: site.name || "xentool",
+  back: "",
+  right: `<div class="nav-links">
+    <a href="#tools">工具</a>
+    <a href="/tools" class="hide-sm">工作台</a>
+    <a href="/status/" class="hide-sm">能力</a>
+    <a href="/api/tools" class="hide-sm">API</a>
+    <span class="pill" id="status"><i aria-hidden="true"></i><span>检测中</span></span>
+  </div>`,
+})}
 <div class="wrap">
-  <nav>
-    <div class="logo"><span class="badge" aria-hidden="true">X</span>${brand}</div>
-    <div class="nav-links">
-      <a href="#tools">工具</a>
-      <a href="/api/tools" class="hide-sm">API</a>
-      <a href="https://github.com/ctoox/xentool" class="hide-sm">GitHub</a>
-      <span class="pill" id="status"><i aria-hidden="true"></i><span>检测中</span></span>
-    </div>
-  </nav>
-
   <header class="hero">
     <span class="kicker">Edge-native · <b>Cloudflare Workers</b></span>
     <h1><span class="grad">${brand}</span></h1>
     <p class="lead">${lead}</p>
-    <div class="search">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
-      <input id="q" type="search" placeholder="搜索工具…" autocomplete="off" aria-label="搜索工具">
-    </div>
-    <div class="stats">
-      <div class="stat"><b>${tools.length}</b><span>工具</span></div>
-      <div class="stat"><b>${live}</b><span>已上线</span></div>
-      <div class="stat"><b>0</b><span>外部依赖</span></div>
+    <div class="hero-stats">
+      <div class="hero-stat"><b>${tools.length}</b><span>工具</span></div>
+      <div class="hero-stat"><b>${live}</b><span>已上线</span></div>
+      <div class="hero-stat"><b>0</b><span>外部依赖</span></div>
     </div>
   </header>
 
-  <div class="section" id="tools"><h2>全部工具</h2><span class="count">${tagline}</span></div>
-  <div class="cards" id="cards">${cards}</div>
-  <p class="empty" id="empty">没有匹配的工具</p>
+  <div class="catalog-head" id="tools">
+    <h2>全部工具 <span class="x-result-count" id="count" role="status" aria-live="polite">${tools.length}</span></h2>
+    <div class="catalog-tools">
+      <div class="x-search">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+        <input id="q" type="search" placeholder="搜索工具…" autocomplete="off" aria-label="搜索工具">
+      </div>
+      <div class="x-view-toggle" role="group" aria-label="显示方式">
+        <button type="button" data-view="card" aria-pressed="true" title="卡片视图">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="3.5" width="7" height="7" rx="1.5"/><rect x="13.5" y="3.5" width="7" height="7" rx="1.5"/><rect x="3.5" y="13.5" width="7" height="7" rx="1.5"/><rect x="13.5" y="13.5" width="7" height="7" rx="1.5"/></svg>
+          <span>卡片</span>
+        </button>
+        <button type="button" data-view="list" aria-pressed="false" title="紧凑视图">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+          <span>紧凑</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <div style="margin:0 0 14px">${chips({ items: chipItems, allCount: tools.length })}</div>
+
+  <div class="cards" id="cards" data-view="card">${cards}</div>
+  <p class="empty" id="empty" role="status" aria-live="polite"><b>没有匹配的工具</b>换个关键词，或选择「全部」分类。</p>
 
   <footer>
     <div class="meta"><span>protocol v${escapeHtml(protocol)}</span><span>${escapeHtml(host)}</span></div>
@@ -233,52 +255,124 @@ footer a:hover{color:var(--cyan)}
 </div>
 <script>
 (function(){
-  var reduce=window.matchMedia&&window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-  if(!reduce&&window.matchMedia&&window.matchMedia('(hover:hover)').matches){
-    document.addEventListener('mousemove',function(e){
-      document.documentElement.style.setProperty('--mx',e.clientX+'px');
-      document.documentElement.style.setProperty('--my',e.clientY+'px');
+  if (!reduce && window.matchMedia && window.matchMedia('(hover:hover)').matches) {
+    document.addEventListener('mousemove', function(e){
+      document.documentElement.style.setProperty('--mx', e.clientX + 'px');
+      document.documentElement.style.setProperty('--my', e.clientY + 'px');
     });
-    var tilts=document.querySelectorAll('a.card');
-    for(var i=0;i<tilts.length;i++){
-      (function(card){
-        card.addEventListener('mousemove',function(e){
-          var r=card.getBoundingClientRect();
-          var px=(e.clientX-r.left)/r.width-0.5;
-          var py=(e.clientY-r.top)/r.height-0.5;
-          card.style.setProperty('--ry',(px*4).toFixed(2)+'deg');
-          card.style.setProperty('--rx',(py*-4).toFixed(2)+'deg');
-        });
-        card.addEventListener('mouseleave',function(){
-          card.style.setProperty('--ry','0deg');
-          card.style.setProperty('--rx','0deg');
-        });
-      })(tilts[i]);
+  }
+
+  var q = document.getElementById('q');
+  var cardsEl = document.getElementById('cards');
+  var countEl = document.getElementById('count');
+  var emptyEl = document.getElementById('empty');
+  var items = [].slice.call(document.querySelectorAll('[data-search]'));
+  var category = 'all';
+
+  function apply() {
+    var term = (q && q.value ? q.value : '').trim().toLowerCase();
+    var shown = 0;
+    for (var i = 0; i < items.length; i++) {
+      var node = items[i];
+      var wrap = node.parentNode;
+      var hay = node.getAttribute('data-search') || '';
+      var cat = node.getAttribute('data-cat') || '';
+      var hit = (!term || hay.indexOf(term) !== -1) && (category === 'all' || cat === category);
+      wrap.classList.toggle('hidden', !hit);
+      if (hit) shown++;
+    }
+    if (countEl) countEl.textContent = shown;
+    if (emptyEl) emptyEl.classList.toggle('show', shown === 0);
+    updateChipCounts();
+  }
+
+  /*
+   * Rewrite the count on each category chip so it reflects what the current
+   * search leaves behind. A chip that still shows its server-rendered total
+   * while a search is active promises entries the list no longer contains.
+   */
+  function updateChipCounts() {
+    var chipRow = document.querySelector('.x-chips');
+    if (!chipRow) return;
+    var chips = chipRow.querySelectorAll('[data-cat]');
+    for (var i = 0; i < chips.length; i++) {
+      var chip = chips[i];
+      var slot = chip.querySelector('.x-chip__count');
+      if (!slot) continue;
+      var id = chip.getAttribute('data-cat');
+      var n = countFor(id === 'all' ? '' : id);
+      slot.textContent = String(n);
+      chip.classList.toggle('x-chip--empty', n === 0);
     }
   }
 
-  var q=document.getElementById('q');
-  var cards=document.querySelectorAll('[data-search]');
-  var empty=document.getElementById('empty');
-  if(q){
-    q.addEventListener('input',function(){
-      var term=q.value.trim().toLowerCase();
-      var shown=0;
-      for(var i=0;i<cards.length;i++){
-        var hit=!term||(cards[i].getAttribute('data-search')||'').indexOf(term)!==-1;
-        cards[i].classList.toggle('hidden',!hit);
-        if(hit)shown++;
+  /* How many items of a category survive the current search term. */
+  function countFor(cat) {
+    var term = (q && q.value ? q.value : '').trim().toLowerCase();
+    var n = 0;
+    for (var i = 0; i < items.length; i++) {
+      var node = items[i];
+      var hay = node.getAttribute('data-search') || '';
+      var c = node.getAttribute('data-cat') || '';
+      if (cat && c !== cat) continue;
+      if (!term || hay.indexOf(term) !== -1) n++;
+    }
+    return n;
+  }
+
+  if (q) q.addEventListener('input', apply);
+
+  var chipRow = document.querySelector('.x-chips');
+  if (chipRow) {
+    chipRow.addEventListener('click', function(e){
+      var btn = e.target.closest('[data-cat]');
+      if (!btn) return;
+      category = btn.getAttribute('data-cat');
+      var all = chipRow.querySelectorAll('[data-cat]');
+      for (var i = 0; i < all.length; i++) {
+        var on = all[i] === btn;
+        all[i].classList.toggle('x-chip--on', on);
+        all[i].setAttribute('aria-pressed', on ? 'true' : 'false');
       }
-      if(empty)empty.style.display=shown?'none':'block';
+      apply();
     });
   }
 
-  var pill=document.getElementById('status');
-  if(pill&&window.fetch){
-    fetch('/health').then(function(r){return r.ok?r.json():Promise.reject()})
-      .then(function(){pill.innerHTML='<i aria-hidden="true"></i><span>运行正常</span>';})
-      .catch(function(){pill.innerHTML='<i aria-hidden="true"></i><span>状态未知</span>';});
+  // Scope the toggle to the buttons. The catalog container also carries a
+  // data-view attribute, so a looser selector picked it up too: the container
+  // was given a stray aria-pressed and a click handler, which meant clicking
+  // any tool card rewrote the saved view preference.
+  var toggles = document.querySelectorAll('.x-view-toggle button[data-view]');
+  function setView(view) {
+    if (view !== 'list') view = 'card';
+    cardsEl.setAttribute('data-view', view);
+    for (var i = 0; i < toggles.length; i++) {
+      toggles[i].setAttribute('aria-pressed', toggles[i].getAttribute('data-view') === view ? 'true' : 'false');
+    }
+    try { localStorage.setItem('xentool:view', view); } catch (e) {}
+  }
+  for (var t = 0; t < toggles.length; t++) {
+    toggles[t].addEventListener('click', function(){ setView(this.getAttribute('data-view')); });
+  }
+  var saved = null;
+  try { saved = localStorage.getItem('xentool:view'); } catch (e) {}
+  // On phones the compact view is the better default: it roughly doubles how
+  // many tools fit on one screen, which matters once the catalog is 100+.
+  if (!saved && window.matchMedia && window.matchMedia('(max-width: 640px)').matches) saved = 'list';
+  if (saved) setView(saved);
+
+  var pill = document.getElementById('status');
+  if (pill && window.fetch) {
+    fetch('/health').then(function(r){ return r.ok ? r.json() : Promise.reject(); })
+      .then(function(){
+        pill.querySelector('span').textContent = '运行正常';
+      })
+      .catch(function(){
+        pill.classList.add('pill--down');
+        pill.querySelector('span').textContent = '状态未知';
+      });
   }
 })();
 </script>

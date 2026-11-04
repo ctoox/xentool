@@ -121,11 +121,16 @@ packages/core/objects.js   Durable Object 类：Counter、Room
 packages/core/quota.js     免费额度守卫：用量追踪 + 60% 熔断
 packages/ui/theme.js       设计令牌 + 组件样式（全部 x- 前缀）
 packages/ui/components.js  可复用片段：card / btn / field / table / login …
-packages/ui/shell.js       工具页共用的页面外壳（内联 CSS）
+packages/ui/shell.js       工具页共用的页面外壳（内联 CSS + 共享顶栏）
 tools/<id>/src/index.js    自包含工具模块
 tools/<id>/wrangler.toml   未来拆成独立 Worker 的模板（当前不部署）
 schema.sql                D1 建表脚本（/sql 控制台用）
 test/smoke.test.mjs        端到端测试，直调 handleRequest
+test/layout-probe.mjs      布局探测：多视口横向溢出 / 触控尺寸 / 可访问名
+test/drawer-check.mjs      工作台抽屉：导航是否可见 + 焦点是否被困住
+test/portal-check.mjs      门户交互：搜索 / 分类计数 / 视图切换 / 偏好不被误改
+test/raw-template.test.mjs 语法守卫：String.raw 块里不能藏反引号
+test/contrast.test.mjs     对比度：正文色必须过 WCAG AA 4.5:1
 ```
 
 **分层原则**：`src/` 是门户和路由，`packages/` 是共享基础设施，`tools/` 是业务。`tools/` 只能 import `packages/`，**不能 import `src/`**（否则拆成独立 Worker 时会带着整个门户）。
@@ -138,15 +143,81 @@ test/smoke.test.mjs        端到端测试，直调 handleRequest
 import { page, card, btn, field, table, badge, notice, emptyState, loginCard } from "../../../packages/ui/components.js";
 ```
 
-可用组件：`card` `btn` `field` `select` `checkbox` `badge` `notice` `emptyState` `stat`/`stats` `display` `table` `codeBlock` `toolbar` `section` `tabs` `chat` `dropzone` `copyLink` `meter`/`meterRow` `loginCard` `page`。
+可用组件：`card` `btn` `field` `select` `checkbox` `badge` `notice` `emptyState` `stat`/`stats` `display` `table` `codeBlock` `toolbar` `section` `tabs` `chat` `dropzone` `copyLink` `meter`/`meterRow` `loginCard` `topbar` `toolCard` `tagList` `chips` `page`。
 
-三条约束：
+四条约束：
 
 - **`page()` 是唯一出口**，它内部调 `shell()`。直接调 `shell()` 说明你在绕过标题/lead/actions 的排版。
+- **每次 `page()` 都必须传 `basePath`**。它会变成 `window.__BASE`，页面脚本用它拼 API 路径。漏传的后果是脚本去请求 `/api/...` 而不是 `/<前缀>/api/...`，**404 会被误读成模型故障或功能没做**。短链工具就漏了三处（登录页两处、控制台一处），目录名 `short` 而路径是 `/s`，最容易被忽略 —— 所以测试改成从 `CATALOG` 自动发现工具，不再手写清单。
 - **不要新增页面级 CSS**。缺样式就往 `theme.js` 加一条 `x-` 规则 —— 加在页面里等于复制一份，正是重构前 23 个 `btn` 的成因。
 - **组件只负责结构，数据一律转义**。`table()` 的单元格接受 HTML（为了内嵌 badge 和链接），所以**单元格里的用户数据必须由调用方先过 `escapeHtml()`**。
 
 三处重复已合并的实例：ADMIN 登录卡片（原来 kv / sql / short 各一份，逐字相同）、`copyLink` 复制按钮（三处）、空状态（十处）。
+
+### 3.2 目录要按 100+ 工具设计
+
+门户当前 23 个工具，目标是 100+。**渲染全部工具，不分页**（分页和搜索框互相打架：你没法搜索没渲染出来的东西），真正会先崩的是"找起来"。
+
+因此门户有四个机制，加新工具时必须沿用：
+
+| 机制 | 位置 | 规则 |
+| --- | --- | --- |
+| 分类 | `src/catalog.js` 的 `category` 字段 | **必须显式写**。分类曾经硬编码在 `portal-page.js` 的 id→组映射表里，结果新工具一律掉进「其他」 |
+| 标签裁剪 | `tagList(tags, { limit: 2 })` | 只显示前 2 个，其余合并成 `+N`。标签**永不换行** —— 换行会让同行卡片高度不齐 |
+| 双视图 | 容器上的 `data-view="card"\|"list"` | **一份 DOM**，靠 CSS 换排布。写两套标记会让字节翻倍且必然漂移 |
+| 视图记忆 | `localStorage["xentool:view"]` | 手机默认紧凑视图（`≤640px`），桌面默认卡片 |
+
+其它几条容易踩的：
+
+- **入场动画延迟必须封顶**：`animation-delay:calc(var(--i) * 26ms)` 里的 `--i` 取 `min(index, 11)`。不封顶的话第 100 张卡要等 6 秒才出现。
+- **手机端不要单列大卡片**：紧凑视图下一项 57px，卡片视图 169px，差 3 倍。
+- **`window.__BASE` 必须透传**：`page()` 会把它交给 `shell()`，它决定 `window.__BASE`，而所有客户端 fetch 都拼这个前缀。漏传会让请求打到根路径，返回 `Not Found` —— 看起来像模型故障，实际是路由 bug（AI 翻译页就中过这一招）。
+- **带管理面的工具要自带登录入口**：浏览器拿不到签名 Cookie，只能通过表单。没有登录页的工具会「页面正常打开，但每个请求都 401」。
+
+### 3.3 响应式与触控靠测量，不靠肉眼
+
+`npm run probe` 会启动无头 Edge，在 1440 / 768 / 375 / 320 四个宽度下跑真实页面，检查三件事：
+
+1. 页面是否横向溢出（`scrollWidth > innerWidth`）
+2. 触控目标是否够高（指针设备 40px，触屏 44px）
+3. 图标按钮是否有可访问名（`aria-label` 或文本）
+
+同时它会检查输入框字号：**小于 16px 时 iOS Safari 聚焦会自动放大整个页面**，这是最刺眼的移动端缺陷。
+
+```bash
+npx wrangler dev --port 8799   # 一个终端
+npm run probe                   # 另一个终端
+```
+
+硬性失败会让命令退出码非 0，可以挂进部署前检查。桌面端 32–36px 的目标只作为提示列出 —— 鼠标操作下那是正常的。
+
+**iPad 的坑**：`@media (pointer:coarse)` 覆盖不到接了触控板的 iPad（它报 `pointer:fine`），而 768px 竖屏又高于 640px 手机断点。所以放大输入框字号有**两个独立触发条件**：
+
+```css
+@media (max-width:1024px),(pointer:coarse){
+  :root{--field-fs:16px;--field-fs-mono:16px}
+}
+```
+
+所有表单字号都必须走 `--field-fs` / `--field-fs-mono` 这两个变量，不要在页面里写死 px —— 写死之后断点就散落在五六个文件里，改一处漏一处。probe 的 tablet 视口也刻意不开启触摸模拟，就是为了验证这条宽度规则真的独立生效。
+
+### 3.4 三个浏览器检查脚本，各管一件事
+
+`probe` 只看**布局**。抽屉、门户这类交互另有专门的脚本，因为它们的故障长得跟布局不一样 —— 抽屉可以是空的，页面却完全正常。
+
+```bash
+npx wrangler dev --port 8799   # 一个终端
+
+npm run probe      # 布局：溢出 / 触控尺寸 / 可访问名 / 输入框字号
+npm run drawer     # 抽屉：导航是否可见、焦点是否被困在抽屉内
+npm run portal     # 门户：搜索 / 分类计数 / 视图切换 / 偏好不被误改
+npm run contrast   # 对比度：正文色是否过 4.5:1
+```
+
+两个坑：
+
+- **浏览器会缓存页面**。改了服务端代码再跑，量到的还是旧版本 —— 看起来像修复没生效。三个脚本都开了 `Network.setCacheDisabled`。
+- **抽屉是克隆出来的**。`nav{display:none}`（手机断点）会连抽屉里的克隆体一起隐藏，于是抽屉打开是空的。所以媒体查询里必须有 `.drawer__body nav{display:flex}` 这样一条覆盖。`npm run drawer` 就是为了守住这一条。
 
 ---
 
@@ -572,7 +643,12 @@ const res = await stub.fetch(new URL("https://do/?op=inc"));
 | 部署报 `database_id` / bucket 无效 | 用了占位 ID。R2 / D1 / Queues / Vectorize 必须先建资源，拿到真实 ID 再放开注释。否则整次构建失败，自动部署一起挂 |
 | 部署报 `class not found` | Durable Object 类没从入口模块导出。`src/index.js` 里的 `export { Counter, Room }` 不能少 |
 | `String.raw` 里写了 `${}` 却不报错 | `String.raw` 只关掉转义，**不关掉插值**。`${` 会被静默求值，页面照常返回但脚本是错的。提交前抽出客户端脚本跑一遍 `node --check` |
+| 报 `Expected ";" but found "pointer"` 之类与 CSS 毫无关系的语法错误 | `String.raw` 块里（含 CSS 注释内部）出现了反引号，模板被提前截断。注释里写 `` `pointer:coarse` `` 就会炸。`npm test` 里的 raw-template 检查会直接指出位置 |
 | 缺绑定的工具返回 500 而不是 503 | 直接用了 `env.XXX`。先过 `capabilities(env)` 或用对应适配器的 `available` |
+| 页面能打开但每个请求都 404 | `page()` 漏传 `basePath`，`window.__BASE` 是空串，脚本把 API 请求打到了根路由。短链工具漏了三处 |
+| 同一个请求 JSON 正常、HTML 报 500 | 两条分支走不同的渲染函数。测试只覆盖了 JSON 分支 —— **HTML 分支也要单独测** |
+| 页面打开是空白的（抽屉/侧栏） | 克隆出来的元素继承了原元素的 `display:none`。媒体查询里要有一条显式覆盖 |
+| 改了代码但测量结果没变 | 浏览器缓存了页面。CDP 脚本要开 `Network.setCacheDisabled` |
 
 ---
 
@@ -580,7 +656,11 @@ const res = await stub.fetch(new URL("https://do/?op=inc"));
 
 ```bash
 npm test               # 必须全绿，一个都不能跳
-npm run deploy:dry     # 看包体积有没有异常膨胀（当前 ~83 KiB / gzip ~23 KiB）
+npm run deploy:dry     # 看包体积有没有异常膨胀（当前 ~238 KiB / gzip ~62 KiB）
+npm run probe          # 多视口布局探测（需先起 dev server）
+npm run drawer         # 工作台抽屉：导航可见 + 焦点被困住
+npm run portal         # 门户：搜索 / 计数 / 视图切换
+npm run contrast       # 文字对比度 ≥ 4.5:1
 ```
 
 再加人工确认：
@@ -593,7 +673,11 @@ npm run deploy:dry     # 看包体积有没有异常膨胀（当前 ~83 KiB / gz
 - [ ] 加了绑定就跑一次 `/status/`，确认这一项变成「可用」
 - [ ] 改了工作台客户端脚本：抽出来 `node --check` 一遍
 - [ ] 改了 `wrangler.toml` 就看部署输出里的绑定和域名行
-- [ ] `.dev.vars`、`.shots/`、`node_modules/`、`dist/` 没进 git
+- [ ] 新增带管理面的工具：浏览器能登录（表单 → Cookie → 页面放行）
+- [ ] 新增目录条目：`src/catalog.js` 里写了 `category`，否则会掉进「其他」
+- [ ] **每个 `page()` 调用都传了 `basePath`**（漏传会让脚本请求打空，404 被误读成功能没做）
+- [ ] **新页面在浏览器里也测过 HTML 分支**（JSON 分支正常不代表 HTML 分支正常）
+- [ ] `.dev.vars`、`.shots/`、`.uxaudit/`、`node_modules/`、`dist/` 没进 git
 
 提交信息用祈使句，说清「为什么」而不只是「改了什么」：
 

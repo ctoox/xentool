@@ -231,6 +231,7 @@ ${notice({
     body,
     actions: durable ? badge({ text: "KV 持久", tone: "accent" }) : badge({ text: "内存（不持久）", tone: "warn" }),
     script: script + COPY_LINK_SCRIPT,
+    basePath,
   });
 }
 
@@ -243,7 +244,7 @@ function renderViewPage({ id, record, basePath }) {
   ${badge({ text: id, tone: "accent" })}
   <span class="x-muted" style="font-size:12.5px">到期自动删除${burnNote}</span>
 </div>
-<pre class="content" id="content">${escapeHtml(record.content)}</pre>
+<pre class="x-code__body paste-body" id="content">${escapeHtml(record.content)}</pre>
 <div class="x-row" style="margin-top:16px">
   ${btn({ label: "复制全文", variant: "primary", attrs: { id: "copy" } })}
   ${btn({ label: "原始文本", href: `${basePath}/${id}?raw=1`, variant: "ghost" })}
@@ -264,7 +265,7 @@ function renderViewPage({ id, record, basePath }) {
 })();
 `;
 
-  return page({ title: `Paste ${id}`, lead: "", body, script });
+  return page({ title: `Paste ${id}`, lead: "", body, script, basePath });
 }
 
 function renderMissingPage({ basePath }) {
@@ -274,7 +275,7 @@ function renderMissingPage({ basePath }) {
     desc: "链接可能已到期，或已被阅后即焚销毁。",
     action: btn({ label: "新建一个 Paste", href: `${basePath}/`, variant: "primary" }),
   });
-  return page({ title: "Paste", lead: "", body });
+  return page({ title: "Paste", lead: "", body, basePath });
 }
 
 export default {

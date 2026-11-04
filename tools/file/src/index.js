@@ -379,6 +379,7 @@ ${notice({
     body,
     actions: available ? badge({ text: "R2", tone: "accent" }) : badge({ text: "未配置", tone: "off" }),
     script: UPLOAD_SCRIPT + COPY_LINK_SCRIPT,
+    basePath,
   });
 }
 
@@ -389,7 +390,7 @@ function renderMissing({ basePath }) {
     desc: "链接可能已到期，或被上传者手动删除。",
     action: btn({ label: "上传新文件", href: `${basePath}/`, variant: "primary" }),
   });
-  return page({ title: "文件分享", lead: "", body });
+  return page({ title: "文件分享", lead: "", body, basePath });
 }
 
 function fmtGB(bytes) {

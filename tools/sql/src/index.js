@@ -331,6 +331,7 @@ ${notice({
     actions: usageBadge,
     script: SQL_SCRIPT,
     wide: true,
+    basePath,
   });
 }
 
@@ -364,7 +365,7 @@ ${notice({ tone: "warn", title: "这是部署配置问题。", body: "补上绑�
 ${notice({ tone: "warn", title: "管理面 fail-closed。", body: "没有密钥时不会放行任何请求，这是刻意的行为。" })}
 </div>`;
   }
-  return page({ title: "SQL 控制台", lead: "", body });
+  return page({ title: "SQL 控制台", lead: "", body, basePath });
 }
 
 export default {

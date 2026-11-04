@@ -138,6 +138,7 @@ ${notice({
     body,
     actions: badge({ text: "Durable Objects", tone: "accent" }),
     script: COUNTER_SCRIPT,
+    basePath,
   });
 }
 
@@ -157,7 +158,7 @@ ${card({
     </div>
   `,
 })}`;
-  return page({ title: `计数 · ${name}`, lead: "", body: `<div class="x-fade">${body}</div>` });
+  return page({ title: `计数 · ${name}`, lead: "", body: `<div class="x-fade">${body}</div>`, basePath });
 }
 
 function renderMissingBinding({ basePath }) {
@@ -175,7 +176,7 @@ ${notice({
   body: "补上绑定并重新部署后，本页会自动可用，无需改动任何代码。",
 })}
 </div>`;
-  return page({ title: "强一致计数", lead: "该能力当前未启用。", body });
+  return page({ title: "强一致计数", lead: "该能力当前未启用。", body, basePath });
 }
 
 export default {

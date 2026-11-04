@@ -1,6 +1,16 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { handleRequest } from "../src/index.js";
+import { CATALOG } from "../src/catalog.js";
+
+/**
+ * Tools that serve a page under their own path prefix.
+ *
+ * `status: "available"` filters out the planned entries, which have no
+ * handler; `/tools` is the workbench and lives at the apex rather than under a
+ * tool prefix.
+ */
+const PAGE_TOOLS = CATALOG.filter((tool) => tool.status === "available" && tool.path.startsWith("/") && tool.path !== "/tools");
 
 function call(path, init = {}, host = "tool.xen.autos", env = {}, ctx = {}) {
   return handleRequest(new Request(`https://${host}${path}`, init), env, ctx);
@@ -163,6 +173,96 @@ test("workbench page renders the browser toolkit", async () => {
   assert.match(html, /颜色转换/);
   assert.match(html, /返回工具库/);
   assert.doesNotMatch(html, /<script src=/);
+});
+
+test("every tool page exposes the base path its client script needs", async () => {
+  // Regression: page() used to drop basePath, so window.__BASE stayed empty and
+  // client fetches hit /api/... at the apex. The AI page came back "Not Found"
+  // and read as a model failure rather than a routing bug.
+  const env = {
+    ADMIN: "test-admin-secret",
+    AI: { run: async () => ({ response: "x", translated_text: "x", data: [[0.1]] }) },
+    R2: { put: async () => ({}), get: async () => null, delete: async () => {}, list: async () => ({ objects: [] }) },
+  };
+  // The list comes from the catalog rather than a hand-written array: an
+  // earlier version of this test named six tools and quietly excluded the
+  // ones it had broken. A new tool must be covered the day it is added.
+  for (const tool of PAGE_TOOLS) {
+    // /hit and /room legitimately answer 503 without their Durable Object
+    // binding — the page still must be complete enough to explain that.
+    const res = await call(`${tool.path}/`, { headers: { accept: "text/html", authorization: `Bearer ${env.ADMIN}` } }, "tool.xen.autos", env);
+    assert.ok([200, 503].includes(res.status), `${tool.path}/ should render a page, got ${res.status}`);
+    const html = await res.text();
+    const declared = html.match(/window\.__BASE=("[^"]*"|'[^']*');/);
+    assert.ok(declared, `${tool.path}/ must declare window.__BASE`);
+    // The prefix keeps its leading slash: the client concatenates it with a
+    // route like "/api/translate", so "/ai" + "/api/translate" is the URL.
+    assert.equal(declared[1], JSON.stringify(tool.path), `${tool.path}/ must declare its own prefix`);
+  }
+});
+
+test("no tool page renders a server error", async () => {
+  // A leftover `style: SHORT_CSS` threw a ReferenceError and turned the whole
+  // page into a 500. The symptom pointed at the wrong file, so the cheapest
+  // guard is to render every tool and require a status below 500. 503 is fine:
+  // that is how a tool says "this capability is not bound", and it still
+  // renders a complete page explaining so.
+  const env = {
+    ADMIN: "test-admin-secret",
+    AI: { run: async () => ({ response: "x", translated_text: "x", data: [[0.1]] }) },
+    R2: { put: async () => ({}), get: async () => null, delete: async () => {}, list: async () => ({ objects: [] }) },
+  };
+  for (const tool of PAGE_TOOLS) {
+    const res = await call(`${tool.path}/`, { headers: { accept: "text/html", authorization: `Bearer ${env.ADMIN}` } }, "tool.xen.autos", env);
+    // 503 is a legitimate answer — it is how a tool says "this capability is
+    // not bound here", and it still renders a page explaining so. What must
+    // never happen is a 500: that is a crash, typically an undefined
+    // reference in the page renderer.
+    assert.ok(res.status < 500 || res.status === 503, `${tool.path}/ rendered ${res.status} — a crash, not a missing capability`);
+  }
+});
+
+test("ai page gates browsers with a login form instead of returning 401 JSON", async () => {
+  const env = { ADMIN: "test-admin-secret", AI: { run: async () => ({ translated_text: "Hello" }) } };
+
+  const gate = await call("/ai/", { headers: { accept: "text/html" } }, "tool.xen.autos", env);
+  assert.equal(gate.status, 401);
+  const gateHtml = await gate.text();
+  assert.match(gateHtml, /\/ai\/login/, "the gate must post to the tool's own prefix");
+
+  const login = await call(
+    "/ai/login",
+    { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: "password=test-admin-secret" },
+    "tool.xen.autos",
+    env,
+  );
+  assert.equal(login.status, 303);
+  const cookie = (login.headers.get("set-cookie") || "").split(";")[0];
+  assert.match(cookie, /^xt_ai=/);
+
+  const page = await call("/ai/", { headers: { accept: "text/html", cookie } }, "tool.xen.autos", env);
+  assert.equal(page.status, 200);
+  assert.match(await page.text(), /translate-text/);
+
+  const translated = await call(
+    "/ai/api/translate",
+    { method: "POST", headers: { "content-type": "application/json", cookie }, body: JSON.stringify({ text: "你好", source: "zh", target: "en" }) },
+    "tool.xen.autos",
+    env,
+  );
+  assert.equal(translated.status, 200);
+  assert.equal((await translated.json()).translation, "Hello");
+});
+
+test("portal carries a display category for every tool", async () => {
+  const body = await (await call("/")).json();
+  // The chips are built from these; a missing category silently collapses
+  // every new tool into "其他" as the catalog grows past 100.
+  for (const tool of body.tools) {
+    assert.ok(tool.category && tool.category !== "其他", `${tool.id} needs an explicit category`);
+  }
+  const groups = new Set(body.tools.map((tool) => tool.category));
+  assert.ok(groups.size >= 5, `expected several categories, got ${[...groups].join(", ")}`);
 });
 
 const ADMIN = "test-admin-secret";
@@ -356,6 +456,17 @@ test("short rejects invalid input and unknown codes", async () => {
   assert.equal(badTtl.status, 400);
 
   assert.equal((await call("/s/zzzzzzzz")).status, 404);
+});
+
+test("a missing resource renders an HTML page, not a server error", async () => {
+  // The JSON branch answered 404 correctly while the HTML branch threw a
+  // ReferenceError and answered 500 — the same request shape, two different
+  // renderers, and only one of them was exercised. Ask for both.
+  const html = await call("/s/zzzzzzzz", { headers: { accept: "text/html" } }, "tool.xen.autos", ADMIN_ENV);
+  assert.equal(html.status, 404, "a missing short link is a 404, never a 500");
+  const body = await html.text();
+  assert.match(body, /<!doctype html>/i, "the browser should get a page, not a stack trace");
+  assert.doesNotMatch(body, /ReferenceError/, "no unhandled reference may reach the browser");
 });
 
 test("short counts clicks through waitUntil without blocking the redirect", async () => {

@@ -358,6 +358,84 @@ export function loginCard({
 </div>`;
 }
 
+/* ------------------------------------------------------------------ topbar */
+
+export { topbar, shell } from "./shell.js";
+
+/* ------------------------------------------------------------------- tools */
+
+/**
+ * Tag strip for a catalog card: at most `limit` tags, then a "+N" chip.
+ *
+ * Rendering every tag was fine with 23 tools and two tags each. At 100+ the
+ * strip wraps to three lines, cards stop being a grid, and the tags — the least
+ * important thing on the card — dominate it. The overflow chip carries the
+ * full list as its accessible name so nothing is lost for screen readers.
+ */
+export function tagList(tags = [], { limit = 3 } = {}) {
+  const list = (tags || []).map((tag) => String(tag)).filter(Boolean);
+  if (!list.length) return "";
+  const shown = list.slice(0, limit);
+  const rest = list.slice(limit);
+  const chips = shown.map((tag) => `<span class="x-tag">${escapeHtml(tag)}</span>`);
+  if (rest.length) {
+    chips.push(
+      `<span class="x-tag x-tag--more" title="${escapeHtml(rest.join("、"))}" aria-label="还有 ${rest.length} 个标签：${escapeHtml(rest.join("、"))}">+${rest.length}</span>`,
+    );
+  }
+  return `<div class="x-tag-list">${chips.join("")}</div>`;
+}
+
+/**
+ * One tool in the catalog.
+ *
+ * Single DOM for both views: the markup is a grid with named areas, and
+ * `[data-view="list"]` only re-maps the areas and hides the description. The
+ * alternative — rendering a card tree and a row tree — doubles the bytes for
+ * 100+ tools and guarantees the two drift apart on the next edit.
+ */
+export function toolCard(tool = {}, { icon = "", statusText = "" } = {}) {
+  const available = tool.status !== "planned";
+  const name = escapeHtml(tool.name || tool.id || "");
+  const desc = escapeHtml(tool.description || "");
+  const href = escapeHtml(tool.href || tool.path || "/");
+  const tag = available ? "a" : "div";
+  const hrefAttr = available ? ` href="${href}"` : ` role="link" aria-disabled="true" tabindex="0"`;
+  const state = available
+    ? `<span class="x-badge x-badge--ok">${escapeHtml(statusText || "已上线")}</span>`
+    : `<span class="x-badge x-badge--off">${escapeHtml(statusText || "即将上线")}</span>`;
+
+  return `<${tag} class="x-tool-card${available ? "" : " x-tool-card--soon"}"${hrefAttr} data-search="${escapeHtml(searchText(tool))}" data-cat="${escapeHtml(tool.category || "other")}">
+  <span class="x-tool-card__icon" aria-hidden="true">${icon}</span>
+  <span class="x-tool-card__state">${state}</span>
+  <div class="x-tool-card__main">
+    <h3 class="x-tool-card__title">${name}</h3>
+    <p class="x-tool-card__desc">${desc}</p>
+  </div>
+  <div class="x-tool-card__foot">
+    ${tagList(tool.tags, { limit: 2 })}
+    <span class="x-tool-card__arrow" aria-hidden="true">→</span>
+  </div>
+</${tag}>`;
+}
+
+/** Lowercased haystack used by the client-side filter. */
+export function searchText(tool = {}) {
+  return [tool.id, tool.name, tool.description, ...(tool.tags || [])].filter(Boolean).join(" ").toLowerCase();
+}
+
+/** Category chips with counts. `items` = [{id, name, count}]. */
+export function chips({ items = [], active = "all", allLabel = "全部", allCount = 0 } = {}) {
+  const chip = (id, label, count, on) =>
+    `<button class="x-chip${on ? " x-chip--on" : ""}" type="button" data-cat="${escapeHtml(id)}" aria-pressed="${on ? "true" : "false"}">${escapeHtml(label)}${
+      count == null ? "" : `<span class="x-chip__count">${count}</span>`
+    }</button>`;
+  return `<div class="x-chips" role="group" aria-label="按分类筛选">
+  ${chip("all", allLabel, allCount, active === "all")}
+  ${items.map((item) => chip(item.id, item.name, item.count, active === item.id)).join("")}
+</div>`;
+}
+
 /* ------------------------------------------------------------------- page */
 
 /**
@@ -365,7 +443,16 @@ export function loginCard({
  * `lead` is the one-line summary under the H1 — every tool has one, so it is
  * part of the contract rather than something each page invents.
  */
-export function page({ title = "", lead = "", body = "", actions = "", style = "", script = "", wide = false } = {}) {
+export function page({
+  title = "",
+  lead = "",
+  body = "",
+  actions = "",
+  style = "",
+  script = "",
+  wide = false,
+  basePath = "",
+} = {}) {
   const head = `<div class="x-fade">
   <div class="x-row x-row--between" style="margin-bottom:6px">
     <h1>${escapeHtml(title)}</h1>
@@ -374,5 +461,8 @@ export function page({ title = "", lead = "", body = "", actions = "", style = "
   ${lead ? `<p class="lead">${escapeHtml(lead)}</p>` : ""}
   ${body}
 </div>`;
-  return shell({ title, body: head, style, script, wide });
+  // basePath must reach the shell: it becomes `window.__BASE`, which every
+  // page script prefixes onto its fetch calls. Dropping it here made clients
+  // request /api/... at the apex, i.e. a 404 that looked like a model failure.
+  return shell({ title, body: head, style, script, wide, basePath });
 }

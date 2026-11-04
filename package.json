@@ -7,6 +7,10 @@
   "main": "src/index.js",
   "scripts": {
     "test": "node --test test/*.test.mjs",
+    "probe": "node test/layout-probe.mjs",
+    "drawer": "node test/drawer-check.mjs",
+    "portal": "node test/portal-check.mjs",
+    "contrast": "node test/contrast-check.mjs",
     "dev": "npx wrangler dev",
     "deploy": "npx wrangler deploy",
     "deploy:dry": "npx wrangler deploy --dry-run"

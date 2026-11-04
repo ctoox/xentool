@@ -182,6 +182,7 @@ ${notice({
     body,
     actions: badge({ text: "WebSocket", tone: "accent" }),
     script: ROOM_SCRIPT,
+    basePath,
   });
 }
 
@@ -200,7 +201,7 @@ ${notice({
   body: "补上绑定并重新部署后，本页会自动可用。",
 })}
 </div>`;
-  return page({ title: "实时房间", lead: "该能力当前未启用。", body });
+  return page({ title: "实时房间", lead: "该能力当前未启用。", body, basePath });
 }
 
 export default {
