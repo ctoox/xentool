@@ -4,6 +4,8 @@ AI 工具库，运行在 Cloudflare Workers 边缘。**一个 Worker、一个域
 
 门户是深色、可搜索的工具库界面（光晕背景、玻璃卡片、指针跟随与卡片倾斜），完全内联渲染，无任何外部 CSS/JS/字体/图片依赖，因此门户不会因第三方资源失效而变丑或变慢。
 
+> 要加新工具或接手这个仓库，先读 [AGENTS.md](./AGENTS.md)——里面有分层规则、加工具的完整步骤和所有已知坑。
+
 ## Live endpoints
 
 | Path | Description |

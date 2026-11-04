@@ -8,8 +8,8 @@ export const PROTOCOL_VERSION = 1;
 
 const BASE_HEADERS = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type",
+  "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type, Authorization",
   "X-Xentool-Protocol": String(PROTOCOL_VERSION),
 };
 
