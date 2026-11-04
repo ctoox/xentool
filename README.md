@@ -16,6 +16,21 @@ AI 工具库，运行在 Cloudflare Workers 边缘。**一个 Worker、一个域
 | `GET /paste/` | Paste tool info and limits |
 | `POST /paste/api/paste` | Create a paste: plain text or `{"content":"...","ttl":604800}` |
 | `GET /paste/<id>` | Read a paste |
+| `GET /s/` | Short link info and create page |
+| `POST /s/api` | Create a short link: `{"url":"https://example.com","ttl":0}` |
+| `GET /s/<code>` | 302 to the target |
+| `GET /s/<code>+` | Click stats as JSON |
+
+`xen.autos` (apex) is bound to the same Worker, so short links also resolve at the root:
+
+```bash
+curl -X POST https://xen.autos/api -H 'Content-Type: application/json' \
+  -d '{"url":"github.com/ctoox/xentool"}'
+# -> {"code":"nra2ix","short":"https://xen.autos/nra2ix", ...}
+
+curl -sI https://xen.autos/nra2ix | head -1     # HTTP/1.1 302 Found
+curl -s  https://xen.autos/nra2ix+ | jq .hits  # click count
+```
 
 ```bash
 curl -X POST https://tool.xen.autos/paste/api/paste \
@@ -23,9 +38,11 @@ curl -X POST https://tool.xen.autos/paste/api/paste \
 # -> {"id":"...","url":"https://tool.xen.autos/paste/<id>", ...}
 ```
 
-Storage uses the KV binding `KV` (namespace `tool`, configured in the Cloudflare dashboard). No namespace id is committed and no code branch is needed — `createStore()` picks `env.KV` automatically and only falls back to in-memory when the binding is absent.
+Storage uses the KV binding `KV` (namespace `tool`). Both the KV binding and the Custom Domains are declared in `wrangler.toml` on purpose: Wrangler treats that file as the source of truth and drops anything that only exists in the dashboard.
 
 **Verify after deploy:** `GET /paste/` should report `"storage":"kv","durable":true`. If it reports `"memory"`, the deploy replaced the dashboard binding; add `[[kv_namespaces]]` with `binding = "KV"` and the namespace id to `wrangler.toml`.
+
+Click counts are best-effort: KV has no atomic increment and is eventually consistent, so concurrent hits can undercount. The write goes through `ctx.waitUntil()` so the redirect is never delayed.
 
 ## Architecture
 
@@ -37,6 +54,7 @@ src/index.js           thin entry + Host/path dispatch
 src/catalog.js         tool catalog — DATA, not logic
 src/portal-page.js     standalone portal HTML (no external CSS/JS/assets)
 packages/core/         shared wire protocol (response format, errors, KV adapter)
+packages/ui/shell.js   shared page shell for tool UIs (inline CSS, no assets)
 tools/<id>/src/        self-contained tool module, exports handle()
 tools/<id>/wrangler.toml  template for a future standalone Worker
 test/                  plain Node tests, no wrangler or credentials needed
@@ -48,6 +66,7 @@ Rules that keep future splitting cheap:
 2. **Tools are self-contained.** Each exports `handle(request, env, ctx)` and a `default` Worker entry. Running it in-process or as its own Worker is a deployment decision, not a code change.
 3. **`packages/core` stays minimal and versioned.** Everything shares it, so a change there requires redeploying all Workers. Protocol code only, no business logic.
 4. **Adding a tool** = create `tools/<id>/src/index.js`, add one entry to `src/catalog.js`, add one line to `HANDLERS` in `src/index.js`. Push, done.
+5. **The apex root is a shared namespace.** `xen.autos/<code>` belongs to short links, so every tool must own a real path prefix (`/paste`, `/s`, `/tools`) and never a bare root segment. `tools/short` keeps a `RESERVED` set so a generated code can never shadow a real route.
 
 ## Promote a tool to its own Worker (when needed)
 

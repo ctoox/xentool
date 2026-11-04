@@ -25,6 +25,8 @@ const ICONS = {
     '<path d="M4 6h8M8 6v2c0 3-2 5-4 6"/><path d="M6 12c2 2 4 3 6 3"/><path d="M13 18l3-8 3 8M14.5 15h3"/>',
   paste:
     '<rect x="6" y="4" width="12" height="16" rx="2"/><path d="M9 4V3h6v1"/><path d="M9 9h6M9 13h6M9 17h3"/>',
+  short:
+    '<path d="M10.5 13.5a3.5 3.5 0 005 0l2-2a3.5 3.5 0 00-5-5l-1 1"/><path d="M13.5 10.5a3.5 3.5 0 00-5 0l-2 2a3.5 3.5 0 005 5l1-1"/>',
   chat: '<path d="M4 5h16v10H9l-5 4V5z"/><path d="M8 9h8M8 12h5"/>',
   image:
     '<rect x="4" y="5" width="16" height="14" rx="2"/><circle cx="9" cy="10" r="1.5"/><path d="M4 16l5-4 4 3 3-2 4 3"/>',

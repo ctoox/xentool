@@ -1,0 +1,23 @@
+# Template only — NOT part of the current deploy.
+# Today short is served in-process by the root Worker:
+#   tool.xen.autos/s/<code>   (any host)
+#   xen.autos/<code>          (apex, resolved in src/index.js)
+#
+# To promote short into its own Worker later:
+#   1. bind Custom Domain s.xen.autos (or the apex) to this Worker
+#      (Custom Domains are exact-match; wildcards are not supported)
+#   2. npx wrangler deploy --config tools/short/wrangler.toml
+#   3. no portal code change: host routing in src/index.js activates automatically
+#
+# Clicks are counted in KV. Without a binding the module falls back to memory
+# (per-isolate, NOT durable) so it stays runnable and testable.
+# [[kv_namespaces]]
+# binding = "KV"
+# id = "986df2ee8df44ffe8256254272eb4fef"
+
+name = "xentool-short"
+main = "src/index.js"
+compatibility_date = "2024-11-01"
+
+[observability]
+enabled = true

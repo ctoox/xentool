@@ -1,12 +1,21 @@
 # Portal Worker deployed by the existing Cloudflare project "xentool".
 # CF build settings: Root "/" + Deploy command "npx wrangler deploy".
 # Keep this file at the repository root and keep main = src/index.js.
-# tool.xen.autos is already bound as a Custom Domain in the CF dashboard.
 # Custom Domains are exact-match only — wildcard hostnames are not supported.
 
 name = "xentool"
 main = "src/index.js"
 compatibility_date = "2024-11-01"
+
+# Custom Domains — declared here for the same reason as KV: this file is the
+# source of truth, so dashboard-only domains get dropped on the next deploy.
+#   tool.xen.autos → portal
+#   xen.autos      → portal, plus short links at the root (xen.autos/abc123)
+# Keep every top-level key ABOVE the first [table] header, or TOML nests it.
+routes = [
+  { pattern = "tool.xen.autos", custom_domain = true },
+  { pattern = "xen.autos", custom_domain = true },
+]
 
 [observability]
 enabled = true

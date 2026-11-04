@@ -27,6 +27,7 @@ test("portal renders a complete standalone page", async () => {
   assert.match(html, /<!doctype html>/);
   assert.match(html, /lang="zh-CN"/);
   assert.match(html, /href="\/paste\/"/);
+  assert.match(html, /href="\/s\/"/);
   assert.match(html, /xentool/);
   assert.match(html, /已上线/);
   assert.match(html, /即将上线/);
@@ -35,7 +36,7 @@ test("portal renders a complete standalone page", async () => {
   assert.match(html, /rel="icon"/);
   assert.match(html, /theme-color/);
   assert.doesNotMatch(html, /<script src=/);
-  assert.equal(body.tools.length, 12);
+  assert.equal(body.tools.length, 13);
   assert.equal(body.tools.filter((t) => t.status === "planned").length, 2);
 });
 
@@ -162,6 +163,84 @@ test("workbench page renders the browser toolkit", async () => {
   assert.match(html, /颜色转换/);
   assert.match(html, /返回工具库/);
   assert.doesNotMatch(html, /<script src=/);
+});
+
+test("short link creates, redirects and counts clicks", async () => {
+  const created = await call("/s/api", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ url: "example.com/path" }),
+  });
+  assert.equal(created.status, 201);
+  const { code, short, target } = await created.json();
+  assert.equal(target, "https://example.com/path");
+  assert.equal(short, `https://tool.xen.autos/s/${code}`);
+
+  const visit = await call(`/s/${code}`);
+  assert.equal(visit.status, 302);
+  assert.equal(visit.headers.get("location"), "https://example.com/path");
+  assert.match(visit.headers.get("cache-control"), /no-store/);
+
+  const stats = await call(`/s/${code}+`);
+  const body = await stats.json();
+  assert.equal(body.code, code);
+  assert.equal(body.hits, 1);
+});
+
+test("apex serves short codes at the root", async () => {
+  const created = await call(
+    "/api",
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ url: "https://xen.autos/tools" }),
+    },
+    "xen.autos",
+  );
+  assert.equal(created.status, 201);
+  const { code, short } = await created.json();
+  assert.equal(short, `https://xen.autos/${code}`);
+
+  const visit = await call(`/${code}`, {}, "xen.autos");
+  assert.equal(visit.status, 302);
+  assert.equal(visit.headers.get("location"), "https://xen.autos/tools");
+
+  // the portal still owns the apex root
+  const portal = await call("/", { headers: { accept: "text/html" } }, "xen.autos");
+  assert.match(await portal.text(), /xentool/);
+
+  // on the apex the /s prefix is dropped from generated links
+  const page = await call("/s/", { headers: { accept: "text/html" } }, "xen.autos");
+  assert.match(await page.text(), /xen\.autos\/abc123/);
+  assert.doesNotMatch(await (await call("/s/", { headers: { accept: "text/html" } }, "xen.autos")).text(), /xen\.autos\/s\/abc123/);
+});
+
+test("short rejects invalid input and unknown codes", async () => {
+  const bad = await call("/s/api", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ url: "not a url" }),
+  });
+  assert.equal(bad.status, 400);
+
+  const badTtl = await call("/s/api", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ url: "example.com", ttl: 5 }),
+  });
+  assert.equal(badTtl.status, 400);
+
+  assert.equal((await call("/s/zzzzzzzz")).status, 404);
+});
+
+test("short renders a create page for browsers", async () => {
+  const res = await call("/s/", { headers: { accept: "text/html" } });
+  assert.equal(res.status, 200);
+  assert.match(res.headers.get("content-type"), /text\/html/);
+  const html = await res.text();
+  assert.match(html, /短链/);
+  assert.match(html, /生成短链/);
+  assert.match(html, /返回工具库/);
 });
 
 test("unknown routes return 404", async () => {

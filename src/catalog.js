@@ -45,6 +45,16 @@ export const CATALOG = [
     tags: ["KV", "存储"],
   },
   {
+    id: "short",
+    name: "短链",
+    description: "长链接变短，带点击统计。根域名直达：xen.autos/abc123。",
+    path: "/s",
+    href: "/s/",
+    host: "",
+    status: "available",
+    tags: ["KV", "存储"],
+  },
+  {
     id: "ai-summary",
     name: "AI 摘要",
     description: "长文与网页摘要，基于 Workers AI 在边缘推理。",

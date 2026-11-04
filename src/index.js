@@ -15,8 +15,21 @@ import { renderPortal } from "./portal-page.js";
 import { renderToolsPage } from "./tools-page.js";
 import { FAVICON_SVG, FAVICON_HEADERS } from "./favicon.js";
 import * as paste from "../tools/paste/src/index.js";
+import * as short from "../tools/short/src/index.js";
 
-const HANDLERS = { paste: paste.handle };
+const HANDLERS = { paste: paste.handle, short: short.handle };
+
+// Hosts where the short-link tool owns the root path, so links are as short as
+// possible (xen.autos/abc123). Adding a host here is the only change needed
+// once the domain is bound as a Custom Domain on this Worker.
+const APEX_HOSTS = new Set(["xen.autos"]);
+
+// On the apex, the tool's own control surface folds back to basePath "".
+const APEX_SHORT_ALIASES = new Map([
+  ["/s", "/"],
+  ["/s/", "/"],
+]);
+
 
 export async function handleRequest(request, env = {}) {
   const url = new URL(request.url);
@@ -72,9 +85,22 @@ export async function handleRequest(request, env = {}) {
     (tool) => url.pathname === tool.path || url.pathname.startsWith(`${tool.path}/`),
   );
   if (byPath && HANDLERS[byPath.id]) {
+    // On an apex host the short tool drops its prefix, so generated links are
+    // xen.autos/abc123 instead of xen.autos/s/abc123 (both keep working).
+    const basePath = APEX_HOSTS.has(host) && byPath.id === "short" ? "" : byPath.path;
     return HANDLERS[byPath.id](request, env, {
       path: url.pathname.slice(byPath.path.length) || "/",
-      basePath: byPath.path,
+      basePath,
+      host,
+    });
+  }
+
+  // Apex fallback: a single path segment that no real route claimed is a short
+  // code. Anything deeper stays a 404 so typos don't get masked.
+  if (APEX_HOSTS.has(host) && /^\/[^/]*$/.test(url.pathname)) {
+    return HANDLERS.short(request, env, {
+      path: APEX_SHORT_ALIASES.get(url.pathname) ?? url.pathname,
+      basePath: "",
       host,
     });
   }
