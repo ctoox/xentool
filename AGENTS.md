@@ -28,7 +28,7 @@ npm install
 npm test              # 纯 Node 跑，不需要任何凭据，几秒结束
 npm run dev           # wrangler dev，本地 http://localhost:8787
 npm run deploy:dry    # 只构建不发布，看包体积和绑定
-npx wrangler deploy   # 发布到生产
+npx wrangler deploy   # 手动发布（一般不需要，push 会自动部署）
 ```
 
 本地开发需要 `.dev.vars`（已 gitignore），内容至少一行：
@@ -39,7 +39,14 @@ ADMIN=dev-only-password
 
 生产密钥用 `npx wrangler secret put ADMIN`，**永远不要写进 `wrangler.toml` 或代码**。
 
-> **部署现状（重要）**：这个仓库**没有**接 GitHub → Cloudflare 的自动构建（仓库上没有任何 webhook）。`git push` 不会触发部署，必须手动 `npx wrangler deploy`。别假设 push 完就生效了。
+> **部署是自动的**：`git push` 到 `main` 会触发 Cloudflare Workers Builds（GitHub App `cloudflare-workers-and-pages`），它自己跑 `npx wrangler deploy` 并发布，通常 30 秒内生效。构建结果会以 check run `Workers Builds: xentool` 出现在提交上：
+>
+> ```bash
+> gh api "repos/ctoox/xentool/commits/$(git rev-parse HEAD)/check-runs" \
+>   --jq '.check_runs[] | "\(.name) → \(.conclusion)"'
+> ```
+>
+> 所以**正常情况下你不需要手动部署**。只有两种例外：本地调试要看真实效果、或构建挂了要紧急回滚。手动 `wrangler deploy` 和 Git 构建会**互相覆盖**（谁后完成算谁的），别连着做。
 
 ---
 
@@ -347,6 +354,8 @@ auth.clearedCookie();         // 清除用
 | 自定义域名绑不上 | Custom Domain 只支持精确匹配，**不支持通配符**；且域名不能已存在同名 A/CNAME 记录 |
 | `wrangler` 版本警告 | 当前锁 3.114，v4 升级需要单独验证，不要顺手升 |
 | 302 后计数没变 | KV 最终一致，且计数走 `waitUntil` 后台写，刷新有延迟属正常 |
+| 部署版本号对不上 | Git 构建和手动 `wrangler deploy` 各发一次，谁后完成谁生效。看 `npx wrangler deployments list` 里的 `Source` 区分 |
+| 查不到 webhook 就以为没集成 | GitHub App 的 webhook 配在 App 层，**不会**出现在 `repos/<owner>/<repo>/hooks` 里。要看 check runs 或部署记录 |
 
 ---
 
@@ -395,7 +404,7 @@ future page.
 - Durable Objects → 需要实时协作或强一致计数的场景（短链计数现在是最终一致）
 
 **平台能力**
-- 把 GitHub 接上 Cloudflare Workers Builds，实现 push 自动部署（当前最大缺口）
+- **把 `npm test` 挂进构建**：现在 Build command 是 `None`，测试挂了照样能部署。改成 `npm test && npx wrangler deploy`（或加一个 `predeploy`）就能挡住
 - 给 `/api/tools` 加 OpenAPI 描述
 - 工具级限流
 
@@ -408,4 +417,4 @@ future page.
 - 不要为了让某个测试过而放宽断言（尤其是鉴权相关的）
 - 不要给门户加外部依赖
 - 不要在没有 `Cache-Control: no-store` 的情况下返回含用户数据的响应
-- 不要假设 `git push` 已经上线
+- 不要在 `git push` 之后紧接着手动 `wrangler deploy`，两次发布会互相覆盖（谁后完成算谁的）
