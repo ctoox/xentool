@@ -73,7 +73,7 @@ git push
 **所以团队只需要一个 Forgejo 账号**：不用 GitHub 账号，不用 `gh auth login`，不用 `wrangler login`。
 
 ```bash
-git clone http://git.xen/xen/xentool.git
+git clone http://git.xen/xen/xentool.git   # public，匿名可读
 cd xentool
 npm install && npm test
 # 改代码
@@ -91,7 +91,11 @@ git push          # 走 origin，自动镜像到 GitHub 并部署
    git config --global "credential.http://git.xen.provider" generic
    ```
 
-`git.xen` 关闭了自助注册，账号找管理员开。凭据用 Forgejo 的**访问令牌**（Settings → Applications → Generate New Token，勾 `write:repository`），不要用登录密码。
+**账号与权限**：`git.xen` 已开放自助注册（无邮箱验证、无验证码），直接访问 http://git.xen/user/sign_up 建号即可。
+
+- **读**：仓库是 public，匿名就能 `git clone`，不需要账号。
+- **写**：需要管理员把你的账号加成该仓库的 Collaborator（Write 权限）。注册完把用户名发给管理员。
+- **凭据**：用 Forgejo 的**访问令牌**（Settings → Applications → Generate New Token，勾 `write:repository`）当密码，不要用登录密码。
 
 ---
 
