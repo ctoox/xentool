@@ -1,4 +1,5 @@
 import { PROTOCOL_VERSION } from "../packages/core/index.js";
+import { TOKENS } from "../packages/ui/theme.js";
 import { TOOLKIT, CATEGORIES } from "./toolkit.js";
 import { escapeHtml } from "./portal-page.js";
 
@@ -758,7 +759,7 @@ export function renderToolsPage({
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="alternate icon" href="/favicon.ico">
 <style>
-:root{--bg:#06070a;--ink:#e8eaf0;--dim:#8b90a0;--line:rgba(255,255,255,.09);--cyan:#22d3ee;--violet:#a78bfa;--pink:#f472b6}
+${TOKENS}
 *{box-sizing:border-box}
 html,body{margin:0;min-height:100%}
 body{background:var(--bg);color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;-webkit-font-smoothing:antialiased;line-height:1.55}

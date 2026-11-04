@@ -69,20 +69,23 @@ crons = ["*/15 * * * *"]
 # Create the resource first, then paste the real identifier.
 # ---------------------------------------------------------------------------
 
-# R2 — file share tool (/file). Create the bucket once:
-#   npx wrangler r2 bucket create xentool-files
-# [[r2_buckets]]
-# binding = "R2"
-# bucket_name = "xentool-files"
+# R2 — file share tool (/file). Bucket already provisioned as `xbt`.
+# Uploads are hard-stopped at 60% of the free 10 GB allowance (quota.js), so
+# this cannot silently turn into a bill.
+[[r2_buckets]]
+binding = "R2"
+bucket_name = "xbt"
 
-# D1 — SQL console (/sql). Create the database, then copy the id it prints:
-#   npx wrangler d1 create xentool
-# Then apply the schema:
-#   npx wrangler d1 execute xentool --file=./schema.sql --remote
+# D1 — SQL console (/sql). The database `xdb` already exists; the only missing
+# piece is its UUID, which is account-specific and cannot be guessed. A fake id
+# fails `wrangler deploy` outright, which is why this stays commented:
+#   npx wrangler d1 list                      # prints the uuid for xdb
+#   npx wrangler d1 execute xdb --remote --file=./schema.sql
+# Then uncomment and paste the uuid:
 # [[d1_databases]]
 # binding = "DB"
-# database_name = "xentool"
-# database_id = "<paste the id from d1 create>"
+# database_name = "xdb"
+# database_id = "<uuid of xdb>"
 
 # Queues — background expiry sweep. Optional: the cron trigger already does it.
 #   npx wrangler queues create xentool-tasks

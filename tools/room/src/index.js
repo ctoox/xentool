@@ -9,7 +9,7 @@
  * hibernation API, so an idle room costs nothing while clients stay connected.
  */
 import { json, html, health, fail } from "../../../packages/core/index.js";
-import { shell, escapeHtml } from "../../../packages/ui/shell.js";
+import { page, card, btn, field, badge, chat, emptyState, notice } from "../../../packages/ui/components.js";
 
 const NO_STORE = { "Cache-Control": "no-store" };
 const NAME_PATTERN = /^[a-zA-Z0-9_-]{1,48}$/;
@@ -66,38 +66,7 @@ export async function handle(request, env = {}, ctx = {}) {
 
 /* ---------------------------------------------------------------------- UI */
 
-const ROOM_CSS = String.raw`
-.chat{border:1px solid var(--line);border-radius:14px;background:rgba(255,255,255,.03);overflow:hidden;margin-top:18px}
-.log{height:320px;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:8px}
-.msg{font-size:13.5px;line-height:1.55;word-break:break-word}
-.msg .who{color:var(--cyan);font-family:ui-monospace,monospace;font-size:11.5px;margin-right:8px}
-.msg.sys{color:var(--dim);font-size:12.5px}
-.echo{display:flex;gap:10px;padding:12px;border-top:1px solid var(--line);background:rgba(0,0,0,.18)}
-.echo input{flex:1;border:1px solid var(--line);border-radius:9px;background:rgba(0,0,0,.3);color:var(--ink);padding:10px 12px;font-size:13.5px;outline:none}
-.status{display:inline-flex;align-items:center;gap:7px;font-size:12px;color:var(--dim)}
-.status i{width:6px;height:6px;border-radius:50%;background:#5b6070}
-.status.on i{background:#22d3ee;box-shadow:0 0 8px rgba(34,211,238,.9)}
-`;
-
-function renderPage({ basePath }) {
-  const body = `
-<h1>实时房间</h1>
-<p class="lead">基于 Durable Object 的广播房间。开两个标签页进同一个房间即可验证；空闲时会自动休眠，连接保持不断。</p>
-<div class="row" style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
-  <input class="field" id="room" value="lobby" placeholder="房间名" style="max-width:220px">
-  <button class="btn primary" id="join" type="button">进入房间</button>
-  <span class="status" id="status"><i aria-hidden="true"></i><span>未连接</span></span>
-</div>
-<div class="chat">
-  <div class="log" id="log"></div>
-  <div class="echo">
-    <input id="msg" placeholder="说点什么…" autocomplete="off" disabled>
-    <button class="btn" id="send" type="button" disabled>发送</button>
-  </div>
-</div>
-<p class="error" id="error"></p>`;
-
-  const script = String.raw`
+const ROOM_SCRIPT = String.raw`
 (function(){
   var base = window.__BASE || '';
   var roomEl = document.getElementById('room');
@@ -106,20 +75,23 @@ function renderPage({ basePath }) {
   var sendBtn = document.getElementById('send');
   var joinBtn = document.getElementById('join');
   var statusEl = document.getElementById('status');
+  var statusText = document.getElementById('status-text');
   var errEl = document.getElementById('error');
   var socket = null;
 
   function line(text, cls){
     var div = document.createElement('div');
-    div.className = 'msg' + (cls ? ' ' + cls : '');
+    div.className = 'x-chat__msg' + (cls ? ' ' + cls : '');
     div.textContent = text;
     log.appendChild(div);
     log.scrollTop = log.scrollHeight;
   }
 
   function setStatus(on, text){
-    statusEl.classList.toggle('on', Boolean(on));
-    statusEl.querySelector('span').textContent = text;
+    statusEl.className = 'x-badge x-badge--' + (on ? 'ok' : 'off');
+    var dot = statusEl.querySelector('.x-dot');
+    if (dot) dot.className = 'x-dot x-dot--' + (on ? 'ok' : 'off');
+    statusText.textContent = text;
   }
 
   function join(){
@@ -139,14 +111,14 @@ function renderPage({ basePath }) {
       setStatus(true, '已连接 ' + name);
       msg.disabled = false;
       sendBtn.disabled = false;
-      line('已加入 ' + name, 'sys');
+      line('已加入 ' + name, 'x-chat__msg--sys');
       msg.focus();
     });
 
     socket.addEventListener('message', function(event){
       var data = null;
       try { data = JSON.parse(event.data); } catch (e) { data = { body: event.data }; }
-      if (data.type === 'error') { line(data.message, 'sys'); return; }
+      if (data.type === 'error') { line(data.message, 'x-chat__msg--sys'); return; }
       line(data.body, '');
     });
 
@@ -177,17 +149,58 @@ function renderPage({ basePath }) {
 })();
 `;
 
-  return shell({ title: "实时房间", body, basePath, script, style: ROOM_CSS });
+function renderPage({ basePath }) {
+  const statusBadge = `<span class="x-badge x-badge--off" id="status"><span class="x-dot x-dot--off"></span><span id="status-text">未连接</span></span>`;
+
+  const body = `
+${card({
+  tint: true,
+  title: "加入房间",
+  sub: "开两个标签页进同一个房间即可验证广播。空闲时对象自动休眠，连接保持不断。",
+  body: `
+    <div class="x-row" style="margin-bottom:16px">
+      <div style="flex:1;min-width:180px;max-width:260px">${field({ label: "房间名", name: "room", id: "room", value: "lobby", placeholder: "字母、数字、下划线" })}</div>
+      ${btn({ label: "进入房间", variant: "primary", attrs: { id: "join" } })}
+      <span class="x-sep"></span>
+      ${statusBadge}
+    </div>
+    ${chat({})}
+    <p class="error" id="error" style="margin-top:12px"></p>
+  `,
+})}
+<div style="margin-top:16px">
+${notice({
+  tone: "info",
+  title: "消息不落库。",
+  body: "广播只在当前连接的对象实例内转发；最后一个人离开后房间即清空，没有历史记录可查。",
+})}
+</div>`;
+
+  return page({
+    title: "实时房间",
+    lead: "基于 Durable Object 的广播房间，WebSocket 走 hibernation API。",
+    body,
+    actions: badge({ text: "WebSocket", tone: "accent" }),
+    script: ROOM_SCRIPT,
+  });
 }
 
 function renderMissingBinding({ basePath }) {
   const body = `
-<div class="empty">
-  <h2>Durable Objects 未绑定</h2>
-  <p>实时房间需要 <code>[[durable_objects.bindings]]</code> 与 <code>[[migrations]]</code>，并导出 Room 类。</p>
-  <p><a class="btn" href="${escapeHtml(basePath)}/">返回</a></p>
+${emptyState({
+  icon: "bolt",
+  title: "Durable Objects 未绑定",
+  desc: "实时房间需要 [[durable_objects.bindings]] 与 [[migrations]]，并在入口导出 Room 类。",
+  action: btn({ label: "返回", href: `${basePath}/`, variant: "ghost" }),
+})}
+<div style="margin-top:16px">
+${notice({
+  tone: "warn",
+  title: "这是部署配置问题，不是代码问题。",
+  body: "补上绑定并重新部署后，本页会自动可用。",
+})}
 </div>`;
-  return shell({ title: "实时房间", body, basePath, script: "" });
+  return page({ title: "实时房间", lead: "该能力当前未启用。", body });
 }
 
 export default {

@@ -13,8 +13,9 @@
  * One object per name; `idFromName` makes the mapping deterministic, so
  * `/hit/deploys` always lands on the same object without any lookup table.
  */
-import { json, html, health, fail, notFound } from "../../../packages/core/index.js";
-import { shell, escapeHtml } from "../../../packages/ui/shell.js";
+import { json, html, health, fail } from "../../../packages/core/index.js";
+import { escapeHtml } from "../../../packages/ui/shell.js";
+import { page, card, btn, field, display, emptyState, notice, badge } from "../../../packages/ui/components.js";
 
 const NO_STORE = { "Cache-Control": "no-store" };
 const NAME_PATTERN = /^[a-zA-Z0-9_-]{1,64}$/;
@@ -74,28 +75,7 @@ export async function handle(request, env = {}, ctx = {}) {
 
 /* ---------------------------------------------------------------------- UI */
 
-const HIT_CSS = String.raw`
-.number{font-size:76px;font-weight:600;letter-spacing:-.04em;line-height:1;margin:18px 0 6px;background:linear-gradient(96deg,var(--cyan),var(--violet));-webkit-background-clip:text;background-clip:text;color:transparent;font-variant-numeric:tabular-nums}
-.hint-row{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:18px}
-`;
-
-function renderPage({ basePath }) {
-  const body = `
-<h1>强一致计数</h1>
-<p class="lead">每个名字对应一个 Durable Object，写入被串行化，并发下不会丢计数。KV 做不到这一点。</p>
-<div class="editor" style="padding:16px">
-  <input class="field" id="name" value="demo" placeholder="计数器名字" style="width:100%">
-</div>
-<div class="hint-row">
-  <button class="btn primary" id="inc" type="button">+1</button>
-  <button class="btn" id="peek" type="button">读取</button>
-  <button class="btn" id="reset" type="button">归零</button>
-</div>
-<div class="number" id="value">—</div>
-<div class="meta" id="meta" style="color:var(--dim);font-size:12.5px"></div>
-<p class="error" id="error"></p>`;
-
-  const script = String.raw`
+const COUNTER_SCRIPT = String.raw`
 (function(){
   var base = window.__BASE || '';
   var nameEl = document.getElementById('name');
@@ -125,28 +105,77 @@ function renderPage({ basePath }) {
 })();
 `;
 
-  return shell({ title: "强一致计数", body, basePath, script, style: HIT_CSS });
+function renderPage({ basePath }) {
+  const body = `
+${card({
+  tint: true,
+  title: "计数器",
+  sub: "每个名字对应一个 Durable Object，写入被串行化，并发下不会丢计数。",
+  body: `
+    ${field({ label: "计数器名字", name: "name", id: "name", value: "demo", placeholder: "字母、数字、下划线" })}
+    ${display({ value: "—", label: "当前值", id: "value" })}
+    <div class="x-row" style="margin-top:22px">
+      ${btn({ label: "+1", variant: "primary", attrs: { id: "inc" } })}
+      ${btn({ label: "读取", attrs: { id: "peek" } })}
+      ${btn({ label: "归零", variant: "ghost", attrs: { id: "reset" } })}
+    </div>
+    <p class="x-field__hint x-mono" id="meta"></p>
+    <p class="error" id="error"></p>
+  `,
+  foot: `POST 语义由 GET + ?op= 表达，方便直接在浏览器地址栏或 curl 里调用。`,
+})}
+<div style="margin-top:16px">
+${notice({
+  tone: "info",
+  title: "为什么不用 KV。",
+  body: "KV 没有原子自增且最终一致，并发点击会少算；Durable Object 把写入串行化，结果是精确的。",
+})}
+</div>`;
+
+  return page({
+    title: "强一致计数",
+    lead: "一个名字一个对象，读改写走同一条单线程队列。",
+    body,
+    actions: badge({ text: "Durable Objects", tone: "accent" }),
+    script: COUNTER_SCRIPT,
+  });
 }
 
 function renderCounter({ basePath, name, value, op }) {
   const body = `
-<div class="meta"><span class="dot" aria-hidden="true"></span><code>${escapeHtml(name)}</code><span>${escapeHtml(op)}</span></div>
-<div class="number">${escapeHtml(value ?? "—")}</div>
-<div class="actions">
-  <a class="btn" href="${escapeHtml(basePath)}/${escapeHtml(name)}">+1</a>
-  <a class="btn" href="${escapeHtml(basePath)}/">换一个计数器</a>
-</div>`;
-  return shell({ title: `计数 ${name}`, body, basePath, script: "" });
+${card({
+  tint: true,
+  body: `
+    <div class="x-row" style="margin-bottom:18px">
+      ${badge({ text: name, tone: "accent", dot: true })}
+      ${badge({ text: op, tone: "off" })}
+    </div>
+    ${display({ value: value ?? "—", label: "当前计数" })}
+    <div class="x-row" style="margin-top:24px">
+      ${btn({ label: "+1", href: `${basePath}/${escapeHtml(name)}`, variant: "primary" })}
+      ${btn({ label: "换一个计数器", href: `${basePath}/`, variant: "ghost" })}
+    </div>
+  `,
+})}`;
+  return page({ title: `计数 · ${name}`, lead: "", body: `<div class="x-fade">${body}</div>` });
 }
 
 function renderMissingBinding({ basePath }) {
   const body = `
-<div class="empty">
-  <h2>Durable Objects 未绑定</h2>
-  <p>需要在 wrangler.toml 中声明 <code>[[durable_objects.bindings]]</code> 与 <code>[[migrations]]</code>，并导出 Counter 类。</p>
-  <p><a class="btn" href="${escapeHtml(basePath)}/">返回</a></p>
+${emptyState({
+  icon: "bolt",
+  title: "Durable Objects 未绑定",
+  desc: "需要在 wrangler.toml 中声明 [[durable_objects.bindings]] 与 [[migrations]]，并在入口导出 Counter 类。",
+  action: `${btn({ label: "返回", href: `${basePath}/`, variant: "ghost" })}`,
+})}
+<div style="margin-top:16px">
+${notice({
+  tone: "warn",
+  title: "这是部署配置问题，不是代码问题。",
+  body: "补上绑定并重新部署后，本页会自动可用，无需改动任何代码。",
+})}
 </div>`;
-  return shell({ title: "强一致计数", body, basePath, script: "" });
+  return page({ title: "强一致计数", lead: "该能力当前未启用。", body });
 }
 
 export default {

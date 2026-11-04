@@ -4,7 +4,12 @@
  * Deliberately dependency-free and inline: no external CSS/fonts/scripts, so
  * tool pages render even if everything else is unavailable. Kept in packages/
  * because several tools share it — treat it like core and keep changes small.
+ *
+ * Component styles live in theme.js and are appended here once per page, so a
+ * tool only pays for the design system, not for its own copy of it.
  */
+
+import { BASE_CSS } from "./theme.js";
 
 export function escapeHtml(value) {
   return String(value ?? "")
@@ -67,7 +72,7 @@ pre.content{margin:0;padding:18px;border:1px solid var(--line);border-radius:12p
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}
 `;
 
-export function shell({ title, body, basePath = "", script = "", style = "" }) {
+export function shell({ title, body, basePath = "", script = "", style = "", wide = false }) {
   const base = JSON.stringify(basePath).replace(/</g, "\\u003c");
   return `<!doctype html>
 <html lang="zh-CN">
@@ -79,7 +84,7 @@ export function shell({ title, body, basePath = "", script = "", style = "" }) {
 <title>${escapeHtml(title)} · xentool</title>
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="alternate icon" href="/favicon.ico">
-<style>${PAGE_CSS}${style}</style>
+<style>${PAGE_CSS}${BASE_CSS}${style}</style>
 </head>
 <body>
 <div class="aura" aria-hidden="true"><span class="a1"></span><span class="a2"></span></div>
@@ -87,7 +92,7 @@ export function shell({ title, body, basePath = "", script = "", style = "" }) {
   <a class="logo" href="/"><span class="badge" aria-hidden="true">X</span>xentool</a>
   <a class="back" href="/">← 返回工具库</a>
 </div></div>
-<main>${body}</main>
+<main${wide ? ' class="wide"' : ""}>${body}</main>
 <script>window.__BASE=${base};</script>
 ${script ? `<script>${script}</script>` : ""}
 </body>

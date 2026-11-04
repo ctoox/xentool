@@ -22,7 +22,7 @@ import {
   AIUnavailable,
   cosine,
 } from "../../../packages/core/index.js";
-import { shell, escapeHtml } from "../../../packages/ui/shell.js";
+import { page, card, btn, select, tabs, badge, notice } from "../../../packages/ui/components.js";
 
 const MAX_CHARS = 12000;
 const MAX_TOKENS = 700;
@@ -174,69 +174,7 @@ async function readJson(request) {
 
 /* ---------------------------------------------------------------------- UI */
 
-const AI_CSS = String.raw`
-.tabs{display:flex;gap:6px;margin:0 0 20px;flex-wrap:wrap}
-.tab{appearance:none;border:1px solid var(--line);background:rgba(255,255,255,.04);color:var(--dim);padding:8px 14px;border-radius:9px;font-size:13px;cursor:pointer;font-family:inherit}
-.tab.on{color:var(--ink);border-color:rgba(34,211,238,.45);background:rgba(34,211,238,.10)}
-.notice{padding:12px 14px;border:1px solid rgba(244,114,182,.3);border-radius:10px;background:rgba(244,114,182,.07);color:#f0a6c8;font-size:13px;margin:0 0 18px}
-.out{min-height:120px}
-`;
-
-function renderPage({ basePath, available, gated, configured }) {
-  const notice = !available
-    ? `<div class="notice">Workers AI 绑定未配置。在 wrangler.toml 中加上 <code>[ai] binding = "AI"</code> 后重新部署即可启用。</div>`
-    : gated && !configured
-      ? `<div class="notice">未配置 ADMIN，AI 接口默认关闭。设置 <code>npx wrangler secret put ADMIN</code>，或显式设置 <code>AI_PUBLIC=true</code> 开放。</div>`
-      : "";
-
-  const body = `
-<h1>AI 工具</h1>
-<p class="lead">摘要、翻译、向量与相似度，全部在 Cloudflare 边缘推理。模型：Llama 3.1 8B / m2m100 / BGE-M3。</p>
-${notice}
-<div class="tabs" id="tabs">
-  <button class="tab on" type="button" data-tab="summary">摘要</button>
-  <button class="tab" type="button" data-tab="translate">翻译</button>
-  <button class="tab" type="button" data-tab="embed">向量</button>
-</div>
-
-<div id="view-summary">
-  <div class="editor"><textarea id="summary-text" placeholder="粘贴需要摘要的文本…" spellcheck="false"></textarea></div>
-  <div class="bar" style="display:flex;gap:10px;padding:12px 0;flex-wrap:wrap">
-    <select id="summary-style">
-      <option value="brief">一段话</option>
-      <option value="bullets">要点列表</option>
-      <option value="outline">结构化提纲</option>
-    </select>
-    <span class="spacer"></span>
-    <button class="btn primary" type="button" id="summary-run">生成摘要</button>
-  </div>
-  <pre class="out" id="summary-out"></pre>
-</div>
-
-<div id="view-translate" hidden>
-  <div class="editor"><textarea id="translate-text" placeholder="粘贴需要翻译的文本…" spellcheck="false"></textarea></div>
-  <div class="bar" style="display:flex;gap:10px;padding:12px 0;flex-wrap:wrap">
-    <select id="translate-source"><option value="zh">中文</option><option value="en">英文</option><option value="ja">日文</option></select>
-    <span>→</span>
-    <select id="translate-target"><option value="en">英文</option><option value="zh">中文</option><option value="ja">日文</option></select>
-    <span class="spacer"></span>
-    <button class="btn primary" type="button" id="translate-run">翻译</button>
-  </div>
-  <pre class="out" id="translate-out"></pre>
-</div>
-
-<div id="view-embed" hidden>
-  <div class="editor"><textarea id="embed-text" placeholder="输入一段文本，得到 1024 维向量…" spellcheck="false"></textarea></div>
-  <div class="bar" style="display:flex;gap:10px;padding:12px 0">
-    <span class="spacer"></span>
-    <button class="btn primary" type="button" id="embed-run">计算向量</button>
-  </div>
-  <pre class="out" id="embed-out"></pre>
-</div>
-
-<p class="error" id="ai-error"></p>`;
-
-  const script = String.raw`
+const AI_SCRIPT = String.raw`
 (function(){
   var base = window.__BASE || '';
   var errEl = document.getElementById('ai-error');
@@ -267,13 +205,14 @@ ${notice}
   }
 
   function run(btn, out, path, body, render){
-    var label = btn.textContent;
+    var label = btn.querySelector('span:last-child') || btn;
+    var text = label.textContent;
     btn.disabled = true;
-    btn.textContent = '处理中…';
+    label.textContent = '处理中…';
     out.textContent = '';
     post(path, body).then(function(res){
       btn.disabled = false;
-      btn.textContent = label;
+      label.textContent = text;
       if (!res.ok) { errEl.textContent = res.data.error || '请求失败'; return; }
       out.textContent = render(res.data);
     });
@@ -307,7 +246,99 @@ ${notice}
 })();
 `;
 
-  return shell({ title: "AI 工具", body, basePath, script, style: AI_CSS });
+const LANG_LABELS = { zh: "中文", en: "英文", ja: "日文", ko: "韩文", fr: "法文", de: "德文", es: "西班牙文", ru: "俄文" };
+const LANG_OPTIONS = LANGS.map((code) => ({ label: LANG_LABELS[code] || code, value: code }));
+
+function renderPage({ basePath, available, gated, configured }) {
+  const banner = !available
+    ? notice({
+        tone: "warn",
+        title: "Workers AI 绑定未配置。",
+        body: '在 wrangler.toml 中加上 [ai] binding = "AI" 后重新部署即可启用。',
+      })
+    : gated && !configured
+      ? notice({
+          tone: "warn",
+          title: "未配置 ADMIN，AI 接口默认关闭。",
+          body: "设置 npx wrangler secret put ADMIN，或显式设置 AI_PUBLIC=true 开放。",
+        })
+      : "";
+
+  const panel = (id, inner, hidden = false) => `<div id="view-${id}"${hidden ? " hidden" : ""}>${inner}</div>`;
+
+  const body = `
+${banner}
+${tabs({
+  items: [
+    { key: "summary", label: "摘要", active: true },
+    { key: "translate", label: "翻译" },
+    { key: "embed", label: "向量" },
+  ],
+})}
+${panel(
+  "summary",
+  card({
+    title: "生成摘要",
+    sub: "Llama 3.1 8B，运行在最近的边缘节点。",
+    body: `
+      <textarea class="x-textarea" id="summary-text" placeholder="粘贴需要摘要的文本…" spellcheck="false"></textarea>
+      <div class="x-row" style="margin-top:12px">
+        ${select({ label: "输出形式", id: "summary-style", options: [
+          { label: "一段话", value: "brief" },
+          { label: "要点列表", value: "bullets" },
+          { label: "结构化提纲", value: "outline" },
+        ], value: "brief" })}
+        <span class="x-toolbar__spacer"></span>
+        ${btn({ label: "生成摘要", variant: "primary", attrs: { id: "summary-run" } })}
+      </div>
+      <pre class="x-console" id="summary-out" style="margin-top:14px"></pre>
+    `,
+  }),
+)}
+${panel(
+  "translate",
+  card({
+    title: "翻译",
+    sub: "m2m100，支持中英日互译。",
+    body: `
+      <textarea class="x-textarea" id="translate-text" placeholder="粘贴需要翻译的文本…" spellcheck="false"></textarea>
+      <div class="x-row" style="margin-top:12px">
+        ${select({ label: "源语言", id: "translate-source", options: LANG_OPTIONS, value: "zh" })}
+        <span class="x-muted" style="margin-top:18px">→</span>
+        ${select({ label: "目标语言", id: "translate-target", options: LANG_OPTIONS, value: "en" })}
+        <span class="x-toolbar__spacer"></span>
+        ${btn({ label: "翻译", variant: "primary", attrs: { id: "translate-run" } })}
+      </div>
+      <pre class="x-console" id="translate-out" style="margin-top:14px"></pre>
+    `,
+  }),
+  true,
+)}
+${panel(
+  "embed",
+  card({
+    title: "文本向量",
+    sub: "BGE-M3，1024 维。可用于相似度检索或写入 Vectorize。",
+    body: `
+      <textarea class="x-textarea" id="embed-text" placeholder="输入一段文本，得到 1024 维向量…" spellcheck="false"></textarea>
+      <div class="x-row" style="margin-top:12px">
+        <span class="x-toolbar__spacer"></span>
+        ${btn({ label: "计算向量", variant: "primary", attrs: { id: "embed-run" } })}
+      </div>
+      <pre class="x-console" id="embed-out" style="margin-top:14px"></pre>
+    `,
+  }),
+  true,
+)}
+<p class="error" id="ai-error"></p>`;
+
+  return page({
+    title: "AI 工具",
+    lead: "摘要、翻译、向量与相似度，全部在 Cloudflare 边缘推理。模型：Llama 3.1 8B / m2m100 / BGE-M3。",
+    body,
+    actions: available ? badge({ text: "Workers AI", tone: "accent" }) : badge({ text: "未配置", tone: "off" }),
+    script: AI_SCRIPT,
+  });
 }
 
 export default {

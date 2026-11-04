@@ -28,7 +28,19 @@ import {
   createStore,
   createAuth,
 } from "../../../packages/core/index.js";
-import { shell, escapeHtml } from "../../../packages/ui/shell.js";
+import { escapeHtml } from "../../../packages/ui/shell.js";
+import {
+  page,
+  card,
+  btn,
+  select,
+  copyLink,
+  copyLinkScript,
+  loginCard,
+  emptyState,
+  notice,
+  badge,
+} from "../../../packages/ui/components.js";
 
 const CODE_LENGTH = 6;
 const MIN_TTL = 60;
@@ -95,7 +107,7 @@ export async function handle(request, env = {}, ctx = {}) {
       return html(
         authorized
           ? await renderConsole({ store, host, basePath })
-          : renderLogin({ basePath, configured: auth.configured }),
+          : renderLogin({ basePath, configured: auth.configured, error: loginError(url) }),
         200,
         NO_STORE,
       );
@@ -347,75 +359,38 @@ async function listLinks(store, host, basePath) {
 
 /* ---------------------------------------------------------------------- HTML */
 
-const SHORT_CSS = String.raw`
-.editor input.url{width:100%;border:0;background:transparent;color:var(--ink);padding:20px 16px;font:14.5px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;outline:none}
-.editor input.url::placeholder{color:#5b6070}
-.result .linkrow input{font-size:14px}
-.login{max-width:380px;margin:0 auto}
-.login input{width:100%;border:1px solid var(--line);border-radius:10px;background:rgba(255,255,255,.04);color:var(--ink);padding:12px 14px;font-size:14px;outline:none}
-.login input:focus{border-color:rgba(34,211,238,.5);box-shadow:0 0 0 4px rgba(34,211,238,.09)}
-.login .btn{width:100%;justify-content:center;margin-top:12px;padding:11px}
-.head{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;margin:38px 0 12px}
-.head h2{margin:0;font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--dim);font-weight:500}
-table.links{width:100%;border-collapse:collapse;font-size:13px}
-table.links th{text-align:left;font-weight:500;color:var(--dim);font-size:11px;letter-spacing:.08em;text-transform:uppercase;padding:0 10px 8px;border-bottom:1px solid var(--line)}
-table.links td{padding:11px 10px;border-bottom:1px solid rgba(255,255,255,.05);vertical-align:middle}
-table.links code{font-family:ui-monospace,monospace;color:var(--cyan)}
-table.links a{color:var(--ink);text-decoration:none}
-table.links a:hover{color:var(--cyan)}
-table.links .num{font-variant-numeric:tabular-nums;color:var(--ink)}
-.mono{font-family:ui-monospace,monospace;font-size:12px;color:var(--dim);white-space:nowrap}
-.trunc{display:block;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dim);font-size:12.5px}
-.mini{appearance:none;border:1px solid var(--line);background:transparent;color:var(--dim);border-radius:7px;padding:4px 9px;font-size:11.5px;cursor:pointer;font-family:inherit}
-.mini:hover{color:#f09595;border-color:rgba(240,149,149,.4)}
-.wrap{overflow-x:auto}
-@media (max-width:640px){.trunc{max-width:140px}.mono{display:none}}
-`;
+function loginError(url) {
+  const flag = url.searchParams.get("e");
+  if (!flag) return "";
+  return flag === "unset" ? "ADMIN 尚未配置，口令登录不可用。" : "口令不正确，请重试。";
+}
 
-function renderLogin({ basePath, configured }) {
+function renderLogin({ basePath, configured, error = "" }) {
   if (!configured) {
-    return shell({
-      title: "短链",
-      basePath,
-      style: SHORT_CSS,
-      body: `
-<div class="empty">
-  <h2>还没有配置 ADMIN</h2>
-  <p>短链的创建与管理需要管理员口令。在项目目录执行：</p>
-  <p><code>npx wrangler secret put ADMIN</code></p>
-  <p>然后重新访问本页。</p>
-</div>`,
-    });
+    const body = `${emptyState({
+      icon: "lock",
+      title: "还没有配置 ADMIN",
+      desc: "短链的创建与管理需要管理员口令。在项目目录执行 npx wrangler secret put ADMIN，然后重新访问本页。",
+      action: btn({ label: "查看平台能力", href: "/status/", variant: "ghost" }),
+    })}
+<div style="margin-top:16px">
+${notice({ tone: "warn", title: "管理面 fail-closed。", body: "没有密钥时不会放行任何请求，这是刻意的行为。" })}
+</div>`;
+    return page({ title: "短链", lead: "", body });
   }
 
-  return shell({
-    title: "短链",
-    basePath,
-    style: SHORT_CSS,
-    body: `
-<div class="login">
-  <h1>短链控制台</h1>
-  <p class="lead">需要管理员口令才能创建和管理链接。</p>
-  <form method="post" action="${escapeHtml(basePath)}/login">
-    <input type="password" name="password" placeholder="ADMIN 口令" autocomplete="current-password" autofocus>
-    <button class="btn primary" type="submit">进入</button>
-  </form>
-  <p class="error" id="login-error"></p>
-</div>
-<script>
-if (new URLSearchParams(location.search).get('e')) {
-  document.getElementById('login-error').textContent = '口令不正确，请重试。';
-}
-</script>`,
+  const body = loginCard({
+    action: `${basePath}/login`,
+    title: "短链控制台",
+    desc: "生成短链、查看点击、删除失效链接。需要管理员口令。",
+    error,
+    hint: "口令与 KV、SQL 控制台共用同一个 ADMIN 密钥。",
   });
+  return page({ title: "短链", lead: "", body });
 }
 
 async function renderConsole({ store, host, basePath }) {
   const links = await collectLinks(store, host, basePath);
-
-  const options = TTL_OPTIONS.map(
-    (opt) => `<option value="${opt.value}"${opt.value === 0 ? " selected" : ""}>${opt.label}</option>`,
-  ).join("");
 
   const rows = links
     .map(
@@ -423,45 +398,40 @@ async function renderConsole({ store, host, basePath }) {
 <tr data-code="${escapeHtml(code)}">
   <td><code>${escapeHtml(code)}</code></td>
   <td><a href="${escapeHtml(basePath)}/${escapeHtml(code)}" target="_blank" rel="noopener">${escapeHtml(basePath)}/${escapeHtml(code)}</a></td>
-  <td><span class="trunc" title="${escapeHtml(target)}">${escapeHtml(target)}</span></td>
-  <td class="num">${hits}</td>
-  <td class="mono">${escapeHtml(formatDate(expiresAt))}</td>
-  <td><button class="mini" type="button" data-del="${escapeHtml(code)}">删除</button></td>
+  <td><span class="x-trunc" title="${escapeHtml(target)}">${escapeHtml(target)}</span></td>
+  <td class="x-num">${hits}</td>
+  <td class="x-mono">${escapeHtml(formatDate(expiresAt))}</td>
+  <td><button class="x-btn x-btn--sm x-btn--danger" type="button" data-del="${escapeHtml(code)}">删除</button></td>
 </tr>`,
     )
     .join("");
 
   const body = `
-<h1>短链控制台</h1>
-<p class="lead">生成短链、查看点击、删除失效链接。存储 backend：${store.backend === "kv" ? "kv（持久）" : "memory（不持久，仅测试）"}</p>
-
-<div class="editor">
-  <input class="url" id="target" placeholder="https://example.com/very/long/path?utm=..." spellcheck="false" autocomplete="off">
-  <div class="bar">
-    <select id="ttl" aria-label="有效期">${options}</select>
-    <span class="spacer"></span>
-    <button class="btn primary" id="create" type="button">生成短链</button>
+${card({
+  title: "生成短链",
+  sub: `存储 backend：${store.backend === "kv" ? "kv（持久）" : "memory（不持久，仅测试）"}`,
+  body: `
+    <input class="x-input x-mono" id="target" placeholder="https://example.com/very/long/path?utm=..." spellcheck="false" autocomplete="off" style="height:48px;font-size:14px">
+    <div class="x-row" style="margin-top:12px">
+      ${select({ label: "有效期", id: "ttl", options: TTL_OPTIONS, value: 0 })}
+      <span class="x-toolbar__spacer"></span>
+      ${btn({ label: "生成短链", variant: "primary", attrs: { id: "create" } })}
+    </div>
+    ${copyLink({ label: "短链已生成", inputId: "short", copyId: "copy", openId: "open" })}
+    <p class="error" id="error" style="margin-top:10px"></p>
+  `,
+})}
+<div style="margin-top:22px">
+  <div class="x-row x-row--between" style="margin-bottom:10px">
+    <h2 class="x-section__title">已有链接 <span id="count" class="x-muted">${links.length}</span></h2>
+    <form method="post" action="${escapeHtml(basePath)}/logout">${btn({ label: "退出", variant: "ghost", size: "sm", type: "submit" })}</form>
   </div>
-</div>
-<div class="result" id="result" hidden>
-  <div class="label">短链已生成</div>
-  <div class="linkrow">
-    <input id="short" readonly>
-    <button class="btn" id="copy" type="button">复制</button>
-    <a class="btn" id="open" href="#" target="_blank" rel="noopener">访问</a>
+  <div class="x-table-wrap">
+  <table class="x-table">
+    <thead><tr><th>短码</th><th>链接</th><th>目标</th><th>点击</th><th>过期</th><th></th></tr></thead>
+    <tbody id="rows">${rows}</tbody>
+  </table>
   </div>
-</div>
-<p class="error" id="error"></p>
-
-<div class="head">
-  <h2>已有链接 <span id="count">${links.length}</span></h2>
-  <form method="post" action="${escapeHtml(basePath)}/logout"><button class="mini" type="submit">退出</button></form>
-</div>
-<div class="wrap">
-<table class="links">
-  <thead><tr><th>短码</th><th>链接</th><th>目标</th><th>点击</th><th>过期</th><th></th></tr></thead>
-  <tbody id="rows">${rows || `<tr id="empty"><td colspan="6" class="mono">还没有链接，上面生成一条。</td></tr>`}</tbody>
-</table>
 </div>`;
 
   const script = String.raw`
@@ -473,10 +443,10 @@ async function renderConsole({ store, host, basePath }) {
   var result = document.getElementById('result');
   var shortInput = document.getElementById('short');
   var openLink = document.getElementById('open');
-  var copyBtn = document.getElementById('copy');
   var errEl = document.getElementById('error');
   var rows = document.getElementById('rows');
   var count = document.getElementById('count');
+  var label = create.querySelector('span:last-child') || create;
 
   function stamp(ms){
     if (!ms) return '永久';
@@ -491,9 +461,6 @@ async function renderConsole({ store, host, basePath }) {
   }
 
   function addRow(link){
-    var empty = document.getElementById('empty');
-    if (empty) empty.remove();
-
     var tr = document.createElement('tr');
     tr.setAttribute('data-code', link.code);
 
@@ -512,7 +479,7 @@ async function renderConsole({ store, host, basePath }) {
 
     var targetCell = document.createElement('td');
     var span = document.createElement('span');
-    span.className = 'trunc';
+    span.className = 'x-trunc';
     span.title = link.target;
     span.textContent = link.target;
     targetCell.appendChild(span);
@@ -520,7 +487,7 @@ async function renderConsole({ store, host, basePath }) {
     var actCell = document.createElement('td');
     var del = document.createElement('button');
     del.type = 'button';
-    del.className = 'mini';
+    del.className = 'x-btn x-btn--sm x-btn--danger';
     del.setAttribute('data-del', link.code);
     del.textContent = '删除';
     actCell.appendChild(del);
@@ -528,8 +495,8 @@ async function renderConsole({ store, host, basePath }) {
     tr.appendChild(codeCell);
     tr.appendChild(linkCell);
     tr.appendChild(targetCell);
-    tr.appendChild(cell('0', 'num'));
-    tr.appendChild(cell(link.expiresAt ? stamp(link.expiresAt) : '永久', 'mono'));
+    tr.appendChild(cell('0', 'x-num'));
+    tr.appendChild(cell(link.expiresAt ? stamp(link.expiresAt) : '永久', 'x-mono'));
     tr.appendChild(actCell);
 
     rows.insertBefore(tr, rows.firstChild);
@@ -540,7 +507,7 @@ async function renderConsole({ store, host, basePath }) {
     if (!target.value) { errEl.textContent = '请输入链接'; return; }
     errEl.textContent = '';
     create.disabled = true;
-    create.textContent = '生成中…';
+    label.textContent = '生成中…';
     fetch(base + '/api', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -549,10 +516,10 @@ async function renderConsole({ store, host, basePath }) {
       return r.json().then(function(d){ return { ok: r.ok, data: d }; });
     }).then(function(res){
       create.disabled = false;
-      create.textContent = '生成短链';
+      label.textContent = '生成短链';
       if (!res.ok) {
         if (res.data.error === 'unauthorized') { location.reload(); return; }
-        errEl.textContent = res.data.error || '生成失败';
+        errEl.textContent = res.data.message || res.data.error || '生成失败';
         return;
       }
       shortInput.value = res.data.short;
@@ -563,7 +530,7 @@ async function renderConsole({ store, host, basePath }) {
       target.value = '';
     }).catch(function(e){
       create.disabled = false;
-      create.textContent = '生成短链';
+      label.textContent = '生成短链';
       errEl.textContent = '网络错误：' + e.message;
     });
   });
@@ -580,18 +547,17 @@ async function renderConsole({ store, host, basePath }) {
       count.textContent = String(rows.querySelectorAll('tr[data-code]').length);
     });
   });
-
-  copyBtn.addEventListener('click', function(){
-    if (!shortInput.value) return;
-    navigator.clipboard.writeText(shortInput.value).then(function(){
-      copyBtn.textContent = '已复制';
-      setTimeout(function(){ copyBtn.textContent = '复制'; }, 1200);
-    });
-  });
 })();
 `;
 
-  return shell({ title: "短链控制台", body, basePath, script, style: SHORT_CSS });
+  return page({
+    title: "短链控制台",
+    lead: `生成短链、查看点击、删除失效链接。共 ${links.length} 条。`,
+    body,
+    actions: badge({ text: "ADMIN", tone: "accent" }),
+    script: script + copyLinkScript({ inputId: "short" }),
+    wide: true,
+  });
 }
 
 function formatDate(ms) {

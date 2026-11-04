@@ -9,6 +9,13 @@
  * connection, so every statement is checked lexically before it runs. The
  * console is for looking, and a console that can DELETE is a console that
  * eventually does.
+ *
+ * Every statement also spends D1 free-tier rows. A full scan on an unindexed
+ * column counts one row per row *scanned*, not per row returned, so the 5M/day
+ * ceiling can disappear in twenty queries. Usage is recorded from `meta` after
+ * each statement and the console refuses to run at all once the 60% cut-off is
+ * crossed — a console is exactly the place where a careless query is cheap to
+ * type and expensive to pay for.
  */
 import {
   json,
@@ -19,8 +26,18 @@ import {
   createAuth,
   createDb,
   isReadOnly,
+  createQuota,
+  quotaError,
 } from "../../../packages/core/index.js";
-import { shell, escapeHtml } from "../../../packages/ui/shell.js";
+import {
+  page,
+  card,
+  btn,
+  loginCard,
+  emptyState,
+  notice,
+  badge,
+} from "../../../packages/ui/components.js";
 
 const NO_STORE = { "Cache-Control": "no-store" };
 const MAX_ROWS = 500;
@@ -31,6 +48,7 @@ export async function handle(request, env = {}, ctx = {}) {
   const basePath = ctx.basePath ?? "";
   const wantsHtml = (request.headers.get("accept") || "").includes("text/html");
   const db = createDb(env);
+  const quota = createQuota(env);
   const method = request.method;
 
   if (method === "OPTIONS") return json({ ok: true });
@@ -51,9 +69,14 @@ export async function handle(request, env = {}, ctx = {}) {
     if (wantsHtml) {
       if (!db.available) return html(renderState({ basePath, reason: "missing" }), 503, NO_STORE);
       if (!authorized) {
-        return html(renderState({ basePath, reason: "locked", configured: auth.configured }), 401, NO_STORE);
+        return html(
+          renderState({ basePath, reason: "locked", configured: auth.configured, error: loginError(url) }),
+          401,
+          NO_STORE,
+        );
       }
-      return html(renderConsole({ basePath }), 200, NO_STORE);
+      const usage = await quota.snapshot("d1");
+      return html(renderConsole({ basePath, usage }), 200, NO_STORE);
     }
     return json(
       {
@@ -86,6 +109,7 @@ export async function handle(request, env = {}, ctx = {}) {
     );
 
     const detailed = [];
+    let rowsRead = resultRowsRead(tables);
     for (const table of tables.rows.slice(0, 40)) {
       const safe = String(table.name).replace(/"/g, '""');
       let count = null;
@@ -93,7 +117,9 @@ export async function handle(request, env = {}, ctx = {}) {
       try {
         const probe = await db.all(`select count(*) as n from "${safe}"`);
         count = probe.rows?.[0]?.n ?? null;
+        rowsRead += resultRowsRead(probe);
         const info = await db.all(`pragma table_info("${safe}")`);
+        rowsRead += resultRowsRead(info);
         columns = info.rows.map((row) => ({ name: row.name, type: row.type, pk: Boolean(row.pk) }));
       } catch {
         // a view over a missing dependency must not break the whole listing
@@ -101,7 +127,11 @@ export async function handle(request, env = {}, ctx = {}) {
       detailed.push({ name: table.name, type: table.type, rows: count, columns });
     }
 
-    return json({ count: detailed.length, tables: detailed }, 200, NO_STORE);
+    quota.bump("d1", { rowsRead });
+    const drain = quota.flush();
+    if (typeof ctx?.waitUntil === "function") ctx.waitUntil(drain);
+
+    return json({ count: detailed.length, tables: detailed, rowsRead }, 200, NO_STORE);
   }
 
   if (path === "/api" && method === "POST") {
@@ -115,18 +145,29 @@ export async function handle(request, env = {}, ctx = {}) {
       return fail("only read-only statements are allowed (select / with / explain / pragma)", 403);
     }
 
+    const gate = await quota.guard("d1");
+    if (!gate.ok) return json({ ...quotaError(gate), tool: "sql" }, 507, NO_STORE);
+
     const params = Array.isArray(payload.params) ? payload.params.slice(0, 40) : [];
     const started = Date.now();
 
     try {
       const result = await db.all(sql, params);
       const rows = result.rows.slice(0, MAX_ROWS);
+
+      const rowsRead = resultRowsRead(result);
+      const rowsWritten = Number(result.meta?.rows_written ?? result.meta?.rowsWritten ?? 0) || 0;
+      quota.bump("d1", { rowsRead, rowsWritten });
+      const drain = quota.flush();
+      if (typeof ctx?.waitUntil === "function") ctx.waitUntil(drain);
+
       return json(
         {
           sql,
           rowCount: result.rows.length,
           truncated: result.rows.length > MAX_ROWS,
           durationMs: Date.now() - started,
+          rowsRead,
           rows,
         },
         200,
@@ -137,7 +178,18 @@ export async function handle(request, env = {}, ctx = {}) {
     }
   }
 
-  return wantsHtml ? html(renderConsole({ basePath }), 404, NO_STORE) : notFound();
+  return wantsHtml ? html(renderConsole({ basePath, usage: null }), 404, NO_STORE) : notFound();
+}
+
+/** D1 reports rows scanned, which is the number that gets billed. */
+function resultRowsRead(result) {
+  return Number(result?.meta?.rows_read ?? result?.meta?.rowsRead ?? 0) || 0;
+}
+
+function loginError(url) {
+  const flag = url.searchParams.get("e");
+  if (!flag) return "";
+  return flag === "unset" ? "ADMIN 尚未配置，口令登录不可用。" : "口令不正确，请重试。";
 }
 
 /* ------------------------------------------------------------------- auth */
@@ -171,31 +223,7 @@ async function login(request, auth, basePath) {
 
 /* ---------------------------------------------------------------------- UI */
 
-const SQL_CSS = String.raw`
-.editor textarea{min-height:150px}
-.out{min-height:120px;max-height:420px}
-.schema{font-size:12.5px}
-.schema .t{border-bottom:1px solid rgba(255,255,255,.05);padding:10px 0}
-.schema .t b{font-family:ui-monospace,monospace;color:var(--cyan);font-weight:500}
-.schema .cols{color:var(--dim);font-family:ui-monospace,monospace;font-size:11.5px;margin-top:4px;word-break:break-word}
-`;
-
-function renderConsole({ basePath }) {
-  const body = `
-<h1>SQL 控制台</h1>
-<p class="lead">只读查询 D1。仅允许 <code>select</code> / <code>with</code> / <code>explain</code> / <code>pragma</code>，写入语句在到达数据库之前就被拒绝。</p>
-<div class="editor"><textarea id="sql" spellcheck="false" placeholder="select name, type from sqlite_master limit 20">select name, type from sqlite_master where type not like 'sqlite_%' order by name;</textarea></div>
-<div class="bar" style="display:flex;gap:10px;padding:12px 0;align-items:center">
-  <button class="btn primary" id="run" type="button">执行</button>
-  <button class="btn" id="schema" type="button">看表结构</button>
-  <span class="spacer" style="flex:1"></span>
-  <form method="post" action="${escapeHtml(basePath)}/logout"><button class="btn" type="submit">退出</button></form>
-</div>
-<pre class="out" id="out"></pre>
-<p class="error" id="error"></p>
-<div class="schema" id="schema-out"></div>`;
-
-  const script = String.raw`
+const SQL_SCRIPT = String.raw`
 (function(){
   var base = window.__BASE || '';
   var sql = document.getElementById('sql');
@@ -217,8 +245,10 @@ function renderConsole({ basePath }) {
     }).then(function(r){
       return r.json().then(function(d){ return { ok: r.ok, data: d }; });
     }).then(function(res){
-      if (!res.ok) { errEl.textContent = res.data.error || '执行失败'; return; }
-      var head = res.data.rowCount + ' 行 · ' + res.data.durationMs + 'ms' + (res.data.truncated ? ' · 已截断' : '');
+      if (!res.ok) { errEl.textContent = res.data.message || res.data.error || '执行失败'; return; }
+      var head = res.data.rowCount + ' 行 · ' + res.data.durationMs + 'ms'
+        + (res.data.rowsRead ? ' · 扫描 ' + res.data.rowsRead + ' 行' : '')
+        + (res.data.truncated ? ' · 已截断' : '');
       out.textContent = head + '\n\n' + JSON.stringify(res.data.rows, null, 2);
     }).catch(function(e){
       errEl.textContent = '网络错误：' + e.message;
@@ -233,50 +263,108 @@ function renderConsole({ basePath }) {
     fetch(base + '/api/schema').then(function(r){
       return r.json().then(function(d){ return { ok: r.ok, data: d }; });
     }).then(function(res){
-      if (!res.ok) { errEl.textContent = res.data.error || '读取失败'; return; }
+      if (!res.ok) { errEl.textContent = res.data.message || res.data.error || '读取失败'; return; }
       if (!res.data.tables.length) { schemaOut.textContent = '数据库是空的。'; return; }
       res.data.tables.forEach(function(t){
-        var wrap = document.createElement('div');
-        wrap.className = 't';
+        var row = document.createElement('div');
+        row.className = 'x-schema__row';
         var title = document.createElement('b');
-        title.textContent = t.name + '  ';
-        wrap.appendChild(title);
+        title.textContent = t.name;
+        row.appendChild(title);
         var meta = document.createElement('span');
-        meta.className = 'muted';
+        meta.className = 'x-muted';
+        meta.style.marginLeft = '10px';
+        meta.style.fontSize = '11.5px';
         meta.textContent = t.type + ' · ' + (t.rows == null ? '?' : t.rows) + ' 行';
-        wrap.appendChild(meta);
+        row.appendChild(meta);
         var cols = document.createElement('div');
-        cols.className = 'cols';
+        cols.className = 'x-schema__cols';
         cols.textContent = t.columns.map(function(c){ return c.name + ':' + c.type; }).join('  ');
-        wrap.appendChild(cols);
-        schemaOut.appendChild(wrap);
+        row.appendChild(cols);
+        schemaOut.appendChild(row);
       });
     });
   });
 })();
 `;
 
-  return shell({ title: "SQL 控制台", body, basePath, script, style: SQL_CSS });
+function renderConsole({ basePath, usage }) {
+  const usageBadge =
+    usage && usage.state !== "ok"
+      ? badge({
+          text: usage.state === "blocked" ? "配额已熔断" : `用量 ${Math.round(usage.ratio * 100)}%`,
+          tone: usage.state === "blocked" ? "danger" : "warn",
+          dot: true,
+        })
+      : badge({ text: "只读", tone: "accent" });
+
+  const body = `
+${card({
+  title: "查询",
+  sub: "仅允许 select / with / explain / pragma。写入语句在到达数据库之前就被拒绝。",
+  body: `
+    <textarea class="x-textarea" id="sql" spellcheck="false" placeholder="select name, type from sqlite_master limit 20">select name, type from sqlite_master where type not like 'sqlite_%' order by name;</textarea>
+    <div class="x-row" style="margin-top:12px">
+      ${btn({ label: "执行", variant: "primary", attrs: { id: "run" } })}
+      ${btn({ label: "看表结构", attrs: { id: "schema" } })}
+      <span class="x-toolbar__spacer"></span>
+      <form method="post" action="${basePath}/logout">${btn({ label: "退出", variant: "ghost", type: "submit" })}</form>
+    </div>
+    <p class="x-field__hint">⌘ / Ctrl + Enter 直接执行。</p>
+    <pre class="x-console" id="out" style="margin-top:14px"></pre>
+    <p class="error" id="error"></p>
+    <div class="x-schema" id="schema-out" style="margin-top:14px"></div>
+  `,
+})}
+<div style="margin-top:16px">
+${notice({
+  tone: "info",
+  title: "行数按扫描计，不按返回计。",
+  body: "对未建索引的列做过滤时，D1 会把整张表算进 quota —— 免费额度是 500 万行/天，用到 60% 本控制台会自动停止查询。",
+})}
+</div>`;
+
+  return page({
+    title: "SQL 控制台",
+    lead: "只读查询 D1，用量达到免费额度 60% 时自动熔断。",
+    body,
+    actions: usageBadge,
+    script: SQL_SCRIPT,
+    wide: true,
+  });
 }
 
-function renderState({ basePath, reason, configured }) {
-  const body =
-    reason === "missing"
-      ? `<div class="empty"><h2>D1 未绑定</h2><p>需要先创建数据库，再把 <code>database_id</code> 写进 wrangler.toml 的 <code>[[d1_databases]]</code>。占位 ID 会让部署直接失败。</p></div>`
-      : configured
-        ? `<div class="login" style="max-width:380px;margin:0 auto">
-  <h1>SQL 控制台</h1>
-  <p class="lead">需要管理员口令。</p>
-  <form method="post" action="${escapeHtml(basePath)}/login"><input type="password" name="password" placeholder="ADMIN 口令" style="width:100%;border:1px solid var(--line);border-radius:10px;background:rgba(255,255,255,.04);color:var(--ink);padding:12px 14px"><button class="btn primary" type="submit" style="width:100%;justify-content:center;margin-top:12px;padding:11px">进入</button></form>
-  <p class="error" id="login-error"></p>
-</div>
-<script>
-if (new URLSearchParams(location.search).get('e')) {
-  document.getElementById('login-error').textContent = '口令不正确，请重试。';
-}
-</script>`
-        : `<div class="empty"><h2>还没有配置 ADMIN</h2><p>SQL 控制台需要管理员口令：<code>npx wrangler secret put ADMIN</code></p></div>`;
-  return shell({ title: "SQL 控制台", body, basePath, script: "" });
+function renderState({ basePath, reason, configured, error = "" }) {
+  let body;
+  if (reason === "missing") {
+    body = `${emptyState({
+      icon: "db",
+      title: "D1 未绑定",
+      desc: "需要先创建数据库，再把 database_id 写进 wrangler.toml 的 [[d1_databases]]。占位 ID 会让部署直接失败。",
+      action: btn({ label: "查看平台能力", href: "/status/", variant: "ghost" }),
+    })}
+<div style="margin-top:16px">
+${notice({ tone: "warn", title: "这是部署配置问题。", body: "补上绑定并重新部署后，本页自动可用，不需要改代码。" })}
+</div>`;
+  } else if (configured) {
+    body = loginCard({
+      action: `${basePath}/login`,
+      title: "SQL 控制台",
+      desc: "只读查询 D1。需要管理员口令。",
+      error,
+      hint: "口令与短链控制台共用同一个 ADMIN 密钥。",
+    });
+  } else {
+    body = `${emptyState({
+      icon: "lock",
+      title: "还没有配置 ADMIN",
+      desc: "SQL 控制台需要管理员口令：npx wrangler secret put ADMIN。",
+    })}
+<div style="margin-top:16px">
+${notice({ tone: "warn", title: "管理面 fail-closed。", body: "没有密钥时不会放行任何请求，这是刻意的行为。" })}
+</div>`;
+  }
+  return page({ title: "SQL 控制台", lead: "", body });
 }
 
 export default {

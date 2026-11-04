@@ -11,7 +11,19 @@
  * older versions are still readable.
  */
 import { json, text, html, health, fail, notFound, createStore } from "../../../packages/core/index.js";
-import { shell, escapeHtml } from "../../../packages/ui/shell.js";
+import { escapeHtml } from "../../../packages/ui/shell.js";
+import {
+  page,
+  card,
+  btn,
+  select,
+  checkbox,
+  copyLink,
+  COPY_LINK_SCRIPT,
+  notice,
+  emptyState,
+  badge,
+} from "../../../packages/ui/components.js";
 
 const MAX_BYTES = 64 * 1024;
 const MIN_TTL = 60;
@@ -148,32 +160,30 @@ async function readRecord(store, id) {
 }
 
 function renderCreatePage({ basePath, durable }) {
-  const options = TTL_OPTIONS.map(
-    (opt) => `<option value="${opt.value}"${opt.value === DEFAULT_TTL ? " selected" : ""}>${opt.label}</option>`,
-  ).join("");
-
   const body = `
-<h1>Paste</h1>
-<p class="lead">纯文本暂存，链接即分享。内容存放在 Cloudflare KV，到期自动删除。</p>
-<div class="editor">
-  <textarea id="content" placeholder="粘贴或输入文本…（上限 64 KB）" spellcheck="false"></textarea>
-  <div class="bar">
-    <select id="ttl" aria-label="过期时间">${options}</select>
-    <label class="check"><input type="checkbox" id="burn"> 阅后即焚</label>
-    <span class="spacer"></span>
-    <button class="btn primary" id="create" type="button">创建链接</button>
-  </div>
-</div>
-<div class="result" id="result" hidden>
-  <div class="label">链接已生成</div>
-  <div class="linkrow">
-    <input id="url" readonly>
-    <button class="btn" id="copy" type="button">复制</button>
-    <a class="btn" id="open" href="#" target="_blank" rel="noopener">打开</a>
-  </div>
-</div>
-<p class="error" id="error"></p>
-<p class="hint">存储 backend：${durable ? "kv（持久）" : "memory（不持久，仅测试）"}</p>`;
+${card({
+  title: "创建 Paste",
+  sub: "纯文本暂存，链接即分享。内容存放在 Cloudflare KV，到期自动删除。",
+  body: `
+    <textarea class="x-textarea" id="content" placeholder="粘贴或输入文本…（上限 64 KB）" spellcheck="false" style="min-height:240px"></textarea>
+    <div class="x-row" style="margin-top:14px">
+      ${select({ label: "过期时间", id: "ttl", options: TTL_OPTIONS, value: DEFAULT_TTL })}
+      ${checkbox({ label: "阅后即焚", id: "burn" })}
+      <span class="x-toolbar__spacer"></span>
+      ${btn({ label: "创建链接", variant: "primary", attrs: { id: "create" } })}
+    </div>
+    ${copyLink({ label: "链接已生成" })}
+    <p class="error" id="error" style="margin-top:10px"></p>
+  `,
+  foot: `存储 backend：${durable ? "kv（持久）" : "memory（不持久，仅测试）"}`,
+})}
+<div style="margin-top:16px">
+${notice({
+  tone: "info",
+  title: "内容不经过第三方。",
+  body: "文本直接写入 KV，链接之外没有索引；阅后即焚的条目在第一次读取后立刻删除。",
+})}
+</div>`;
 
   const script = String.raw`
 (function(){
@@ -184,14 +194,14 @@ function renderCreatePage({ basePath, durable }) {
   var result = document.getElementById('result');
   var urlInput = document.getElementById('url');
   var openLink = document.getElementById('open');
-  var copyBtn = document.getElementById('copy');
   var errEl = document.getElementById('error');
+  var label = create.querySelector('span:last-child') || create;
 
   create.addEventListener('click', function(){
     if (!content.value) { errEl.textContent = '内容不能为空'; return; }
     errEl.textContent = '';
     create.disabled = true;
-    create.textContent = '创建中…';
+    label.textContent = '创建中…';
     fetch(window.__BASE + '/api/paste', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -200,67 +210,71 @@ function renderCreatePage({ basePath, durable }) {
       return r.json().then(function(d){ return { ok: r.ok, data: d }; });
     }).then(function(res){
       create.disabled = false;
-      create.textContent = '创建链接';
-      if (!res.ok) { errEl.textContent = res.data.error || '创建失败'; return; }
+      label.textContent = '创建链接';
+      if (!res.ok) { errEl.textContent = res.data.message || res.data.error || '创建失败'; return; }
       urlInput.value = res.data.url;
       openLink.href = window.__BASE + '/' + res.data.id;
       result.hidden = false;
       urlInput.select();
     }).catch(function(e){
       create.disabled = false;
-      create.textContent = '创建链接';
+      label.textContent = '创建链接';
       errEl.textContent = '网络错误：' + e.message;
-    });
-  });
-
-  copyBtn.addEventListener('click', function(){
-    if (!urlInput.value) return;
-    navigator.clipboard.writeText(urlInput.value).then(function(){
-      copyBtn.textContent = '已复制';
-      setTimeout(function(){ copyBtn.textContent = '复制'; }, 1200);
     });
   });
 })();
 `;
 
-  return shell({ title: "Paste", body, basePath, script });
+  return page({
+    title: "Paste",
+    lead: "纯文本暂存，链接即分享。到期自动删除。",
+    body,
+    actions: durable ? badge({ text: "KV 持久", tone: "accent" }) : badge({ text: "内存（不持久）", tone: "warn" }),
+    script: script + COPY_LINK_SCRIPT,
+  });
 }
 
 function renderViewPage({ id, record, basePath }) {
   const burnNote = record.burn ? " · 阅后即焚，本次读取后已销毁" : "";
   const body = `
-<div class="meta"><span class="dot" aria-hidden="true"></span>Paste <code>${escapeHtml(id)}</code><span>到期自动删除${burnNote}</span></div>
+<div class="x-row" style="margin-bottom:14px">
+  <span class="x-dot x-dot--ok" aria-hidden="true"></span>
+  <span class="x-muted" style="font-size:12.5px">Paste</span>
+  ${badge({ text: id, tone: "accent" })}
+  <span class="x-muted" style="font-size:12.5px">到期自动删除${burnNote}</span>
+</div>
 <pre class="content" id="content">${escapeHtml(record.content)}</pre>
-<div class="actions">
-  <button class="btn primary" id="copy" type="button">复制全文</button>
-  <a class="btn" href="${escapeHtml(basePath)}/${escapeHtml(id)}?raw=1">原始文本</a>
-  <a class="btn" href="${escapeHtml(basePath)}/">新建</a>
+<div class="x-row" style="margin-top:16px">
+  ${btn({ label: "复制全文", variant: "primary", attrs: { id: "copy" } })}
+  ${btn({ label: "原始文本", href: `${basePath}/${id}?raw=1`, variant: "ghost" })}
+  ${btn({ label: "新建", href: `${basePath}/`, variant: "ghost" })}
 </div>`;
 
   const script = String.raw`
 (function(){
   var btn = document.getElementById('copy');
   var pre = document.getElementById('content');
+  var label = btn.querySelector('span:last-child') || btn;
   btn.addEventListener('click', function(){
     navigator.clipboard.writeText(pre.textContent).then(function(){
-      btn.textContent = '已复制';
-      setTimeout(function(){ btn.textContent = '复制全文'; }, 1200);
+      label.textContent = '已复制';
+      setTimeout(function(){ label.textContent = '复制全文'; }, 1200);
     });
   });
 })();
 `;
 
-  return shell({ title: `Paste ${id}`, body, basePath, script });
+  return page({ title: `Paste ${id}`, lead: "", body, script });
 }
 
 function renderMissingPage({ basePath }) {
-  const body = `
-<div class="empty">
-  <h2>内容不存在或已过期</h2>
-  <p>链接可能已到期，或已被阅后即焚销毁。</p>
-  <p><a class="btn" href="${escapeHtml(basePath)}/">新建一个 Paste</a></p>
-</div>`;
-  return shell({ title: "Paste", body, basePath, script: "" });
+  const body = emptyState({
+    icon: "inbox",
+    title: "内容不存在或已过期",
+    desc: "链接可能已到期，或已被阅后即焚销毁。",
+    action: btn({ label: "新建一个 Paste", href: `${basePath}/`, variant: "primary" }),
+  });
+  return page({ title: "Paste", lead: "", body });
 }
 
 export default {

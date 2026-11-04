@@ -118,6 +118,9 @@ packages/core/ai.js        Workers AI 适配器（chat / translate / embed）
 packages/core/blobs.js     R2 适配器（带内存兜底 + 过期清理）
 packages/core/db.js        D1 适配器 + 只读语句判定
 packages/core/objects.js   Durable Object 类：Counter、Room
+packages/core/quota.js     免费额度守卫：用量追踪 + 60% 熔断
+packages/ui/theme.js       设计令牌 + 组件样式（全部 x- 前缀）
+packages/ui/components.js  可复用片段：card / btn / field / table / login …
 packages/ui/shell.js       工具页共用的页面外壳（内联 CSS）
 tools/<id>/src/index.js    自包含工具模块
 tools/<id>/wrangler.toml   未来拆成独立 Worker 的模板（当前不部署）
@@ -126,6 +129,24 @@ test/smoke.test.mjs        端到端测试，直调 handleRequest
 ```
 
 **分层原则**：`src/` 是门户和路由，`packages/` 是共享基础设施，`tools/` 是业务。`tools/` 只能 import `packages/`，**不能 import `src/`**（否则拆成独立 Worker 时会带着整个门户）。
+
+### 3.1 页面只许用组件层
+
+工具页的 HTML **不再手写**。所有片段来自 `packages/ui/components.js`，样式来自 `theme.js` 的 `x-` 前缀类，由 `shell()` 每页注入一次。
+
+```js
+import { page, card, btn, field, table, badge, notice, emptyState, loginCard } from "../../../packages/ui/components.js";
+```
+
+可用组件：`card` `btn` `field` `select` `checkbox` `badge` `notice` `emptyState` `stat`/`stats` `display` `table` `codeBlock` `toolbar` `section` `tabs` `chat` `dropzone` `copyLink` `meter`/`meterRow` `loginCard` `page`。
+
+三条约束：
+
+- **`page()` 是唯一出口**，它内部调 `shell()`。直接调 `shell()` 说明你在绕过标题/lead/actions 的排版。
+- **不要新增页面级 CSS**。缺样式就往 `theme.js` 加一条 `x-` 规则 —— 加在页面里等于复制一份，正是重构前 23 个 `btn` 的成因。
+- **组件只负责结构，数据一律转义**。`table()` 的单元格接受 HTML（为了内嵌 badge 和链接），所以**单元格里的用户数据必须由调用方先过 `escapeHtml()`**。
+
+三处重复已合并的实例：ADMIN 登录卡片（原来 kv / sql / short 各一份，逐字相同）、`copyLink` 复制按钮（三处）、空状态（十处）。
 
 ---
 
@@ -426,6 +447,36 @@ store.backend;            // "kv" | "memory"
 - 有 `KV` 绑定时走 KV，没有时退回**进程内存**（仅用于测试和本地，不持久）
 - KV 前缀由 `prefix` 自动加，不同工具共用同一个 namespace 不会串
 - KV 是**最终一致**的，写入后立刻读可能读到旧值；**没有原子自增**，计数类功能只能尽力而为
+
+### 免费额度 `createQuota(env)`
+
+```js
+const quota = createQuota(env);
+
+const gate = await quota.guard("r2", { storageBytes: bytes.byteLength, classA: 1 });
+if (!gate.ok) return json(quotaError(gate), 507);   // 507 = 容量上限，不是限流
+
+quota.bump("r2", { storageBytes: stored.size, classA: 1 });
+ctx.waitUntil(quota.flush());                        // 分钟级合并写 KV
+```
+
+免费额度（官方数值，改之前先核对价格页）：
+
+| 维度 | 免费上限 | 周期 | 超了会怎样 |
+| --- | --- | --- | --- |
+| D1 读取 | 5,000,000 行 | 天（00:00 UTC） | 查询失败，不扣费 |
+| D1 写入 | 100,000 行 | 天（00:00 UTC） | 写入失败，不扣费 |
+| D1 存储 | 5 GB | — | 无法新增 |
+| R2 存储 | 10 GB | 月 | **开始计费** |
+| R2 Class A | 1,000,000 | 月 | **开始计费** |
+| R2 Class B | 10,000,000 | 月 | **开始计费** |
+
+**熔断点固定在 60%**（`SAFETY_RATIO`）。留 40% 的原因不是保守：计数器按分钟合并写 KV（KV 自己每天只有 1,000 次写），isolate 又短命，所以数值必然是近似的；剩下的余量也是清理动作必须的 —— 到达上限后还得能删除文件。
+
+两个必须知道的点：
+
+- **D1 按扫描行数计费，不按返回行数。** 未建索引的列做过滤会全表扫描，一次查询就能吃掉几十万行额度。`/sql` 会把 `meta.rows_read` 记进配额，并在超过 60% 后拒绝执行任何语句（`guard("d1")` 在无增量参数时也会返回 blocked）。
+- **R2 超限才扣钱，所以上传是"先检查后写"。** `file` 在写入前用 `guard()` 判断 `已用 + 本次大小`，超阈值直接 507，一个字节都不写。
 
 ### 鉴权 `createAuth(request, env, opts)`
 

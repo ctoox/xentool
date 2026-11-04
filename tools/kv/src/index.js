@@ -14,7 +14,7 @@
  * everywhere, which is what inspection actually needs.
  */
 import { json, html, health, fail, notFound, createAuth } from "../../../packages/core/index.js";
-import { shell, escapeHtml } from "../../../packages/ui/shell.js";
+import { page, card, btn, loginCard, emptyState, notice, badge } from "../../../packages/ui/components.js";
 
 const NO_STORE = { "Cache-Control": "no-store" };
 const WRITE_PREFIX = "kv:";
@@ -52,7 +52,7 @@ export async function handle(request, env = {}, ctx = {}) {
   }
 
   if (!authorized) {
-    if (wantsHtml) return html(renderBlocked({ basePath, reason: "locked", configured: auth.configured }), 401, NO_STORE);
+    if (wantsHtml) return html(renderBlocked({ basePath, reason: "locked", configured: auth.configured, error: loginError(url) }), 401, NO_STORE);
     return json({ error: "unauthorized", hint: "Authorization: Bearer <ADMIN>" }, 401, NO_STORE);
   }
 
@@ -150,54 +150,13 @@ async function login(request, auth, basePath) {
 
 /* ---------------------------------------------------------------------- UI */
 
-const KV_CSS = String.raw`
-.toolbar{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin:0 0 16px}
-.toolbar input{flex:1;min-width:180px}
-table.keys{width:100%;border-collapse:collapse;font-size:13px}
-table.keys th{text-align:left;font-weight:500;color:var(--dim);font-size:11px;letter-spacing:.08em;text-transform:uppercase;padding:0 10px 8px;border-bottom:1px solid var(--line)}
-table.keys td{padding:10px;border-bottom:1px solid rgba(255,255,255,.05);vertical-align:top}
-table.keys code{font-family:ui-monospace,monospace;font-size:12px}
-table.keys tr.sel{background:rgba(34,211,238,.07)}
-.badge{font:10.5px ui-monospace,monospace;padding:2px 6px;border-radius:5px;border:1px solid var(--line);color:var(--dim)}
-.badge.w{color:var(--cyan);border-color:rgba(34,211,238,.35)}
-.wrap{overflow-x:auto}
-.split{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:20px}
-@media (max-width:760px){.split{grid-template-columns:1fr}}
-`;
+function loginError(url) {
+  const flag = url.searchParams.get("e");
+  if (!flag) return "";
+  return flag === "unset" ? "ADMIN 尚未配置，口令登录不可用。" : "口令不正确，请重试。";
+}
 
-function renderConsole({ basePath }) {
-  const body = `
-<h1>KV 控制台</h1>
-<p class="lead">浏览共享 namespace 的全部键。可写区域限定在 <code>kv:</code> 前缀，避免误改其他工具的数据。</p>
-<div class="toolbar">
-  <input class="field" id="prefix" placeholder="按前缀过滤，例如 paste:" value="">
-  <button class="btn" id="reload" type="button">刷新</button>
-  <span class="spacer" style="flex:1"></span>
-  <button class="btn" id="new" type="button">新建 kv: 键</button>
-</div>
-<div class="wrap">
-<table class="keys">
-  <thead><tr><th>键</th><th>过期</th><th>可写</th></tr></thead>
-  <tbody id="rows"><tr><td colspan="3" class="muted">加载中…</td></tr></tbody>
-</table>
-</div>
-<div class="split">
-  <div>
-    <div class="label">值</div>
-    <textarea id="value" placeholder="选中左侧任意键查看内容…" spellcheck="false" style="min-height:180px" readonly></textarea>
-  </div>
-  <div>
-    <div class="label">编辑（仅 kv: 前缀）</div>
-    <textarea id="editor" placeholder="选择或新建一个 kv: 键后在此写入…" spellcheck="false" style="min-height:180px"></textarea>
-    <div class="row" style="display:flex;gap:10px;margin-top:10px">
-      <button class="btn primary" id="save" type="button">保存</button>
-      <button class="btn" id="remove" type="button">删除</button>
-    </div>
-  </div>
-</div>
-<p class="error" id="error"></p>`;
-
-  const script = String.raw`
+const KV_SCRIPT = String.raw`
 (function(){
   var base = window.__BASE || '';
   var rows = document.getElementById('rows');
@@ -237,7 +196,7 @@ function renderConsole({ basePath }) {
     errEl.textContent = '';
     rows.innerHTML = '';
     var loading = el('tr');
-    var cell = el('td', '加载中…', 'muted');
+    var cell = el('td', '加载中…', 'x-muted');
     cell.setAttribute('colspan', '3');
     loading.appendChild(cell);
     rows.appendChild(loading);
@@ -253,7 +212,7 @@ function renderConsole({ basePath }) {
       }
       if (!res.data.keys.length) {
         var empty = el('tr');
-        var c = el('td', '没有匹配的键', 'muted');
+        var c = el('td', '没有匹配的键', 'x-muted');
         c.setAttribute('colspan', '3');
         empty.appendChild(c);
         rows.appendChild(empty);
@@ -269,9 +228,9 @@ function renderConsole({ basePath }) {
         nameCell.addEventListener('click', function(){ select(item.name, item.editable); });
 
         tr.appendChild(nameCell);
-        tr.appendChild(el('td', stamp(item.expiration), 'muted'));
+        tr.appendChild(el('td', stamp(item.expiration), 'x-muted'));
         var flag = el('td');
-        flag.appendChild(el('span', item.editable ? '可写' : '只读', 'badge' + (item.editable ? ' w' : '')));
+        flag.appendChild(el('span', item.editable ? '可写' : '只读', 'x-badge ' + (item.editable ? 'x-badge--ok' : 'x-badge--off')));
         tr.appendChild(flag);
 
         rows.appendChild(tr);
@@ -324,27 +283,92 @@ function renderConsole({ basePath }) {
 })();
 `;
 
-  return shell({ title: "KV 控制台", body, basePath, script, style: KV_CSS });
+function renderConsole({ basePath }) {
+  const table = `<div class="x-table-wrap">
+<table class="x-table">
+  <thead><tr><th>键</th><th>过期</th><th>可写</th></tr></thead>
+  <tbody id="rows"><tr><td colspan="3" class="x-muted">加载中…</td></tr></tbody>
+</table>
+</div>`;
+
+  const body = `
+${card({
+  title: "键列表",
+  sub: "浏览共享 namespace 的全部键。可写区域限定在 kv: 前缀，避免误改其他工具的数据。",
+  body: `
+    <div class="x-toolbar" style="margin-bottom:14px">
+      <input class="x-input" id="prefix" placeholder="按前缀过滤，例如 paste:" style="flex:1;min-width:180px;max-width:320px">
+      ${btn({ label: "刷新", attrs: { id: "reload" } })}
+      <span class="x-toolbar__spacer"></span>
+      ${btn({ label: "新建 kv: 键", attrs: { id: "new" } })}
+    </div>
+    ${table}
+  `,
+})}
+<div class="x-split" style="margin-top:16px">
+  <div>
+    <p class="x-field__label">值</p>
+    <textarea class="x-textarea" id="value" placeholder="选中左侧任意键查看内容…" spellcheck="false" style="min-height:180px" readonly></textarea>
+  </div>
+  <div>
+    <p class="x-field__label">编辑（仅 kv: 前缀）</p>
+    <textarea class="x-textarea" id="editor" placeholder="选择或新建一个 kv: 键后在此写入…" spellcheck="false" style="min-height:180px"></textarea>
+    <div class="x-row" style="margin-top:10px">
+      ${btn({ label: "保存", variant: "primary", attrs: { id: "save" } })}
+      ${btn({ label: "删除", variant: "danger", attrs: { id: "remove" } })}
+    </div>
+  </div>
+</div>
+<p class="error" id="error"></p>
+<div style="margin-top:16px">
+${notice({
+  tone: "info",
+  title: "共用 namespace，按前缀隔离。",
+  body: "每个工具各占一个前缀（paste: / short: / file:）。这里能读全部，但只能写 kv: —— 一个自由编辑器离误删线上数据只差一次手滑。",
+})}
+</div>`;
+
+  return page({
+    title: "KV 控制台",
+    lead: "浏览共享 namespace 的全部键，写入限定在 kv: 前缀。",
+    body,
+    actions: badge({ text: "KV", tone: "accent" }),
+    script: KV_SCRIPT,
+    wide: true,
+  });
 }
 
-function renderBlocked({ basePath, reason, configured }) {
-  const body =
-    reason === "missing"
-      ? `<div class="empty"><h2>KV 未绑定</h2><p>在 wrangler.toml 中声明 <code>[[kv_namespaces]]</code> 后重新部署。</p></div>`
-      : configured
-        ? `<div class="login" style="max-width:380px;margin:0 auto">
-  <h1>KV 控制台</h1>
-  <p class="lead">需要管理员口令。</p>
-  <form method="post" action="${escapeHtml(basePath)}/login"><input type="password" name="password" placeholder="ADMIN 口令" style="width:100%;border:1px solid var(--line);border-radius:10px;background:rgba(255,255,255,.04);color:var(--ink);padding:12px 14px"><button class="btn primary" type="submit" style="width:100%;justify-content:center;margin-top:12px;padding:11px">进入</button></form>
-  <p class="error" id="login-error"></p>
-</div>
-<script>
-if (new URLSearchParams(location.search).get('e')) {
-  document.getElementById('login-error').textContent = '口令不正确，请重试。';
-}
-</script>`
-        : `<div class="empty"><h2>还没有配置 ADMIN</h2><p>KV 控制台需要管理员口令：<code>npx wrangler secret put ADMIN</code></p></div>`;
-  return shell({ title: "KV 控制台", body, basePath, script: "" });
+function renderBlocked({ basePath, reason, configured, error = "" }) {
+  let body;
+  if (reason === "missing") {
+    body = `${emptyState({
+      icon: "db",
+      title: "KV 未绑定",
+      desc: "在 wrangler.toml 中声明 [[kv_namespaces]] 后重新部署。",
+      action: btn({ label: "查看平台能力", href: "/status/", variant: "ghost" }),
+    })}
+<div style="margin-top:16px">
+${notice({ tone: "warn", title: "这是部署配置问题。", body: "补上绑定并重新部署后自动可用。" })}
+</div>`;
+  } else if (configured) {
+    body = loginCard({
+      action: `${basePath}/login`,
+      title: "KV 控制台",
+      desc: "浏览共享 namespace 的全部键。需要管理员口令。",
+      error,
+      hint: "口令与短链、SQL 控制台共用同一个 ADMIN 密钥。",
+    });
+  } else {
+    body = `${emptyState({
+      icon: "lock",
+      title: "还没有配置 ADMIN",
+      desc: "KV 控制台需要管理员口令：npx wrangler secret put ADMIN。",
+    })}
+<div style="margin-top:16px">
+${notice({ tone: "warn", title: "管理面 fail-closed。", body: "没有密钥时不会放行任何请求，这是刻意的行为。" })}
+</div>`;
+  }
+  return page({ title: "KV 控制台", lead: "", body });
 }
 
 export default {

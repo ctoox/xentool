@@ -5,3 +5,4 @@ export { capabilities, missing, unavailable } from "./bindings.js";
 export { createAI, AIUnavailable, MODELS, cosine } from "./ai.js";
 export { createBlobs } from "./blobs.js";
 export { createDb, isReadOnly } from "./db.js";
+export { createQuota, quotaError, level, fmtBytes, FREE_LIMITS, SAFETY_RATIO, periodKey } from "./quota.js";
