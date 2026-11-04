@@ -13,7 +13,7 @@
  */
 
 export const SITE = {
-  name: "itools",
+  name: "xentool",
   tagline: "AI 工具库",
   description: "一个入口，聚合边缘侧的 AI 工具。无需安装，打开即用。",
 };

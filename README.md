@@ -1,4 +1,4 @@
-# itools
+# xentool
 
 AI 工具库，运行在 Cloudflare Workers 边缘。**一个 Worker、一个域名、零额外配置** —— push 到 `main` 即触发 Cloudflare 项目 `xentool`（`npx wrangler deploy`，root `/`），服务立刻在 `tool.xen.autos` 生效。
 

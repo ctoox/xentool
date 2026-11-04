@@ -84,7 +84,10 @@ export function renderPortal({
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#06070a">
 <title>${brand} · ${tagline}</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="alternate icon" href="/favicon.ico">
 <style>
 :root{--bg:#06070a;--ink:#e8eaf0;--dim:#8b90a0;--line:rgba(255,255,255,.08);--line-2:rgba(255,255,255,.14);--cyan:#22d3ee;--violet:#a78bfa;--pink:#f472b6;--mx:50%;--my:30%}
 *{box-sizing:border-box}
@@ -164,7 +167,7 @@ footer a:hover{color:var(--cyan)}
 <div class="grid" aria-hidden="true"></div>
 <div class="wrap">
   <nav>
-    <div class="logo"><span class="badge" aria-hidden="true">it</span>${brand}</div>
+    <div class="logo"><span class="badge" aria-hidden="true">X</span>${brand}</div>
     <div class="nav-links">
       <a href="#tools">工具</a>
       <a href="/api/tools" class="hide-sm">API</a>

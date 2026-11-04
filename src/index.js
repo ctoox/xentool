@@ -12,6 +12,7 @@
 import { json, html, health, notFound, PROTOCOL_VERSION } from "../packages/core/index.js";
 import { CATALOG, SITE, portalTools } from "./catalog.js";
 import { renderPortal } from "./portal-page.js";
+import { FAVICON_SVG, FAVICON_HEADERS } from "./favicon.js";
 import * as paste from "../tools/paste/src/index.js";
 
 const HANDLERS = { paste: paste.handle };
@@ -26,6 +27,16 @@ export async function handleRequest(request, env = {}) {
   if (request.method === "OPTIONS") return json({ ok: true });
   if (url.pathname === "/health") return health("xentool");
   if (url.pathname === "/ping") return json({ pong: true, timestamp: Date.now() });
+
+  if (url.pathname === "/favicon.svg") {
+    return new Response(FAVICON_SVG, { headers: FAVICON_HEADERS });
+  }
+  if (url.pathname === "/favicon.ico") {
+    return new Response(null, {
+      status: 302,
+      headers: { Location: "/favicon.svg", "Cache-Control": "public, max-age=86400" },
+    });
+  }
 
   // Dedicated hostname (optional, activates as soon as the domain is bound).
   const byHost = CATALOG.find((tool) => tool.host === host);

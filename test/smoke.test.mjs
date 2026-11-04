@@ -27,11 +27,13 @@ test("portal renders a complete standalone page", async () => {
   assert.match(html, /<!doctype html>/);
   assert.match(html, /lang="zh-CN"/);
   assert.match(html, /href="\/paste\/"/);
-  assert.match(html, /itools/);
+  assert.match(html, /xentool/);
   assert.match(html, /已上线/);
   assert.match(html, /即将上线/);
   assert.match(html, /prefers-reduced-motion/);
   assert.match(html, /github\.com\/ctoox\/xentool/);
+  assert.match(html, /rel="icon"/);
+  assert.match(html, /theme-color/);
   assert.doesNotMatch(html, /<script src=/);
   assert.equal(body.tools.length, 6);
   assert.equal(body.tools[1].status, "planned");
@@ -95,6 +97,17 @@ test("dedicated host routes to the same tool without code changes", async () => 
 
   const info = await call("/", {}, "paste.xen.autos");
   assert.equal((await info.json()).tool, "paste");
+});
+
+test("favicon is served and legacy .ico redirects", async () => {
+  const svg = await call("/favicon.svg");
+  assert.equal(svg.status, 200);
+  assert.match(svg.headers.get("content-type"), /image\/svg\+xml/);
+  assert.match(await svg.text(), /<svg/);
+
+  const ico = await call("/favicon.ico");
+  assert.equal(ico.status, 302);
+  assert.equal(ico.headers.get("location"), "/favicon.svg");
 });
 
 test("unknown routes return 404", async () => {
