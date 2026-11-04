@@ -16,20 +16,34 @@ AI 工具库，运行在 Cloudflare Workers 边缘。**一个 Worker、一个域
 | `GET /paste/` | Paste tool info and limits |
 | `POST /paste/api/paste` | Create a paste: plain text or `{"content":"...","ttl":604800}` |
 | `GET /paste/<id>` | Read a paste |
-| `GET /s/` | Short link info and create page |
-| `POST /s/api` | Create a short link: `{"url":"https://example.com","ttl":0}` |
-| `GET /s/<code>` | 302 to the target |
-| `GET /s/<code>+` | Click stats as JSON |
+| `GET /s/` | Short link console — login, create, list, delete (admin) |
+| `POST /s/login` | Password → signed session cookie |
+| `POST /s/logout` | Clear the session cookie |
+| `GET /s/api` | List links (admin) |
+| `POST /s/api` | Create a short link: `{"url":"https://example.com","ttl":0}` (admin) |
+| `DELETE /s/api/<code>` | Delete a link (admin) |
+| `GET /s/<code>` | 302 to the target — **public** |
+| `GET /s/<code>+` | Click stats (admin) |
 
-`xen.autos` (apex) is bound to the same Worker, so short links also resolve at the root:
+Short links require the `ADMIN` secret. Create it once:
 
 ```bash
-curl -X POST https://xen.autos/api -H 'Content-Type: application/json' \
-  -d '{"url":"github.com/ctoox/xentool"}'
-# -> {"code":"nra2ix","short":"https://xen.autos/nra2ix", ...}
+npx wrangler secret put ADMIN          # production
+# local dev: put ADMIN=... in .dev.vars (gitignored)
+```
 
-curl -sI https://xen.autos/nra2ix | head -1     # HTTP/1.1 302 Found
-curl -s  https://xen.autos/nra2ix+ | jq .hits  # click count
+Then either sign in at `https://tool.xen.autos/s/`, or use the bearer form:
+
+```bash
+A=$(cat ~/.xentool-admin)   # or paste it
+
+curl -X POST https://xen.autos/s/api -H "Authorization: Bearer $A" \
+  -H 'Content-Type: application/json' -d '{"url":"github.com/ctoox/xentool"}'
+# -> {"code":"rs5ztj","short":"https://xen.autos/s/rs5ztj", ...}
+
+curl -sI https://xen.autos/s/rs5ztj | head -1          # HTTP/1.1 302 Found
+curl -s  https://xen.autos/s/rs5ztj+ -H "Authorization: Bearer $A" | jq .hits
+curl -s  https://xen.autos/s/api     -H "Authorization: Bearer $A" | jq .count
 ```
 
 ```bash
@@ -44,6 +58,15 @@ Storage uses the KV binding `KV` (namespace `tool`). Both the KV binding and the
 
 Click counts are best-effort: KV has no atomic increment and is eventually consistent, so concurrent hits can undercount. The write goes through `ctx.waitUntil()` so the redirect is never delayed.
 
+### Admin auth
+
+`packages/core/auth.js` is a ~100 line primitive shared by any tool that needs an admin surface:
+
+- **Bearer** (`Authorization: Bearer <ADMIN>`) for curl and scripts.
+- **Signed cookie** for browsers: `<exp>.<hmac-sha256(secret, exp)>`, so it is stateless — no session store, no KV read, and rotating the secret logs everyone out.
+- Comparison is constant-time; a wrong secret leaks no timing signal.
+- **Fails closed.** With no `ADMIN` bound, every admin route returns 401 and the console shows setup instructions instead of a login form. A missing secret can never mean "open".
+
 ## Architecture
 
 Planning is kept in the code structure, not in the deployment topology.
@@ -54,6 +77,7 @@ src/index.js           thin entry + Host/path dispatch
 src/catalog.js         tool catalog — DATA, not logic
 src/portal-page.js     standalone portal HTML (no external CSS/JS/assets)
 packages/core/         shared wire protocol (response format, errors, KV adapter)
+packages/core/auth.js  admin auth primitive: bearer + signed cookie, fails closed
 packages/ui/shell.js   shared page shell for tool UIs (inline CSS, no assets)
 tools/<id>/src/        self-contained tool module, exports handle()
 tools/<id>/wrangler.toml  template for a future standalone Worker
@@ -66,7 +90,8 @@ Rules that keep future splitting cheap:
 2. **Tools are self-contained.** Each exports `handle(request, env, ctx)` and a `default` Worker entry. Running it in-process or as its own Worker is a deployment decision, not a code change.
 3. **`packages/core` stays minimal and versioned.** Everything shares it, so a change there requires redeploying all Workers. Protocol code only, no business logic.
 4. **Adding a tool** = create `tools/<id>/src/index.js`, add one entry to `src/catalog.js`, add one line to `HANDLERS` in `src/index.js`. Push, done.
-5. **The apex root is a shared namespace.** `xen.autos/<code>` belongs to short links, so every tool must own a real path prefix (`/paste`, `/s`, `/tools`) and never a bare root segment. `tools/short` keeps a `RESERVED` set so a generated code can never shadow a real route.
+5. **No tool may claim the bare root path.** `/<code>` style routes would put every future page in the same namespace as random short codes, so short links live under `/s/` and the apex root stays free. `tools/short` also keeps a `RESERVED` set so a generated code can never shadow a real route.
+6. **Admin surfaces fail closed.** Anything gated by `createAuth()` returns 401 when the secret is absent — an unconfigured deploy is locked, never open.
 
 ## Promote a tool to its own Worker (when needed)
 
@@ -82,6 +107,6 @@ Do this per tool, not upfront: it adds one deploy unit and one domain binding ea
 
 ```bash
 npm test          # plain Node, no credentials
-npm run dev       # wrangler dev
+npm run dev       # wrangler dev (reads ADMIN from .dev.vars)
 npm run deploy:dry
 ```

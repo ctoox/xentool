@@ -12,7 +12,8 @@ const memory = new Map();
 
 export function createStore(env, prefix) {
   const kv = env?.KV ?? env?.XENTOOL_KV ?? null;
-  const scoped = (id) => `${prefix}:${id}`;
+  const keyPrefix = `${prefix}:`;
+  const scoped = (id) => `${keyPrefix}${id}`;
 
   return {
     backend: kv ? "kv" : "memory",
@@ -42,6 +43,20 @@ export function createStore(env, prefix) {
     async delete(id) {
       if (kv) return kv.delete(scoped(id));
       memory.delete(scoped(id));
+    },
+
+    /** Ids owned by this prefix, newest-first is the caller's job. */
+    async list({ limit = 200 } = {}) {
+      if (kv) {
+        const result = await kv.list({ prefix: keyPrefix, limit });
+        return result.keys.map((key) => key.name.slice(keyPrefix.length));
+      }
+      const ids = [];
+      for (const key of memory.keys()) {
+        if (key.startsWith(keyPrefix)) ids.push(key.slice(keyPrefix.length));
+        if (ids.length >= limit) break;
+      }
+      return ids;
     },
   };
 }

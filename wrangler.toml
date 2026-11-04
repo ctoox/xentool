@@ -9,8 +9,9 @@ compatibility_date = "2024-11-01"
 
 # Custom Domains — declared here for the same reason as KV: this file is the
 # source of truth, so dashboard-only domains get dropped on the next deploy.
-#   tool.xen.autos → portal
-#   xen.autos      → portal, plus short links at the root (xen.autos/abc123)
+#   tool.xen.autos → portal + tools under path prefixes
+#   xen.autos      → the same; the apex root is intentionally NOT a short-code
+#                    namespace, so it stays free for future use
 # Keep every top-level key ABOVE the first [table] header, or TOML nests it.
 routes = [
   { pattern = "tool.xen.autos", custom_domain = true },
@@ -19,6 +20,12 @@ routes = [
 
 [observability]
 enabled = true
+
+# Secrets are NOT declared here — this file is committed.
+# Admin surfaces (short link console, create/list/delete/stats) require:
+#   npx wrangler secret put ADMIN
+# For `wrangler dev`, put ADMIN in .dev.vars (gitignored).
+# Rotating the secret invalidates every existing admin session cookie.
 
 # Durable storage. Must be declared here: Wrangler treats this file as the
 # source of truth and drops dashboard-only bindings on the next deploy.

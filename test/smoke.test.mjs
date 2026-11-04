@@ -165,101 +165,217 @@ test("workbench page renders the browser toolkit", async () => {
   assert.doesNotMatch(html, /<script src=/);
 });
 
-test("short link creates, redirects and counts clicks", async () => {
-  const created = await call("/s/api", {
+const ADMIN = "test-admin-secret";
+const ADMIN_ENV = { ADMIN };
+const BEARER = { authorization: `Bearer ${ADMIN}` };
+
+async function createLink(url, env = ADMIN_ENV, host = "tool.xen.autos") {
+  const res = await call(
+    "/s/api",
+    {
+      method: "POST",
+      headers: { ...BEARER, "content-type": "application/json" },
+      body: JSON.stringify({ url }),
+    },
+    host,
+    env,
+  );
+  return { res, body: await res.json() };
+}
+
+test("short is closed without the admin secret", async () => {
+  const payload = {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ url: "example.com/path" }),
-  });
-  assert.equal(created.status, 201);
-  const { code, short, target } = await created.json();
+    body: JSON.stringify({ url: "example.com" }),
+  };
+
+  // secret bound, but the caller did not present it
+  const anon = await call("/s/api", payload, "tool.xen.autos", ADMIN_ENV);
+  assert.equal(anon.status, 401);
+
+  // no ADMIN bound at all: still closed, never open by default
+  const unset = await call("/s/api", payload, "tool.xen.autos", {});
+  assert.equal(unset.status, 401);
+
+  // a wrong bearer is rejected too
+  const wrong = await call(
+    "/s/api",
+    { ...payload, headers: { ...payload.headers, authorization: "Bearer wrong-secret" } },
+    "tool.xen.autos",
+    ADMIN_ENV,
+  );
+  assert.equal(wrong.status, 401);
+
+  const info = await call("/s/", {}, "tool.xen.autos", ADMIN_ENV);
+  assert.equal((await info.json()).admin, "required");
+  assert.equal((await (await call("/s/", {})).json()).admin, "unset");
+});
+
+test("short creates, redirects and counts clicks", async () => {
+  const { res, body } = await createLink("example.com/path");
+  assert.equal(res.status, 201);
+  const { code, short, target } = body;
   assert.equal(target, "https://example.com/path");
   assert.equal(short, `https://tool.xen.autos/s/${code}`);
 
+  // the redirect itself is public
   const visit = await call(`/s/${code}`);
   assert.equal(visit.status, 302);
   assert.equal(visit.headers.get("location"), "https://example.com/path");
   assert.match(visit.headers.get("cache-control"), /no-store/);
 
-  const stats = await call(`/s/${code}+`);
-  const body = await stats.json();
-  assert.equal(body.code, code);
-  assert.equal(body.hits, 1);
+  // stats are not
+  assert.equal((await call(`/s/${code}+`)).status, 401);
+  const stats = await call(`/s/${code}+`, { headers: BEARER }, "tool.xen.autos", ADMIN_ENV);
+  const statsBody = await stats.json();
+  assert.equal(statsBody.code, code);
+  assert.equal(statsBody.hits, 1);
 });
 
-test("apex serves short codes at the root", async () => {
-  const created = await call(
-    "/api",
+test("short console is gated and login issues a signed cookie", async () => {
+  const locked = await call("/s/", { headers: { accept: "text/html" } }, "tool.xen.autos", ADMIN_ENV);
+  assert.equal(locked.status, 200);
+  assert.match(locked.headers.get("cache-control"), /no-store/);
+  assert.match(await locked.text(), /需要管理员口令/);
+
+  const wrong = await call(
+    "/s/login",
     {
       method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ url: "https://xen.autos/tools" }),
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: "password=nope",
     },
-    "xen.autos",
+    "tool.xen.autos",
+    ADMIN_ENV,
   );
-  assert.equal(created.status, 201);
-  const { code, short } = await created.json();
-  assert.equal(short, `https://xen.autos/${code}`);
+  assert.equal(wrong.status, 303);
+  assert.match(wrong.headers.get("location"), /e=1/);
+  assert.equal(wrong.headers.get("set-cookie"), null);
 
-  const visit = await call(`/${code}`, {}, "xen.autos");
-  assert.equal(visit.status, 302);
-  assert.equal(visit.headers.get("location"), "https://xen.autos/tools");
+  const ok = await call(
+    "/s/login",
+    {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: `password=${ADMIN}`,
+    },
+    "tool.xen.autos",
+    ADMIN_ENV,
+  );
+  assert.equal(ok.status, 303);
+  const setCookie = ok.headers.get("set-cookie");
+  assert.match(setCookie, /xt_short=/);
+  assert.match(setCookie, /HttpOnly/);
+  assert.match(setCookie, /SameSite=Lax/);
 
-  // the portal still owns the apex root
+  const cookie = setCookie.split(";")[0];
+  const unlocked = await call(
+    "/s/",
+    { headers: { accept: "text/html", cookie } },
+    "tool.xen.autos",
+    ADMIN_ENV,
+  );
+  const page = await unlocked.text();
+  assert.match(page, /短链控制台/);
+  assert.match(page, /生成短链/);
+  assert.match(page, /已有链接/);
+  assert.match(page, /返回工具库/);
+
+  // a tampered cookie is rejected
+  const forged = `${cookie.split(".")[0]}.deadbeef`;
+  const denied = await call(
+    "/s/",
+    { headers: { accept: "text/html", cookie: forged } },
+    "tool.xen.autos",
+    ADMIN_ENV,
+  );
+  assert.match(await denied.text(), /需要管理员口令/);
+});
+
+test("short console warns when ADMIN is not bound", async () => {
+  const res = await call("/s/", { headers: { accept: "text/html" } });
+  assert.match(await res.text(), /还没有配置 ADMIN/);
+});
+
+test("short lists and deletes links", async () => {
+  const { body } = await createLink("https://example.com/to-remove");
+  const { code } = body;
+
+  const list = await call("/s/api", { headers: BEARER }, "tool.xen.autos", ADMIN_ENV);
+  assert.equal(list.status, 200);
+  const listing = await list.json();
+  assert.ok(listing.links.some((link) => link.code === code && link.target === "https://example.com/to-remove"));
+
+  const removed = await call(
+    `/s/api/${code}`,
+    { method: "DELETE", headers: BEARER },
+    "tool.xen.autos",
+    ADMIN_ENV,
+  );
+  assert.equal(removed.status, 200);
+  assert.equal((await removed.json()).deleted, true);
+  assert.equal((await call(`/s/${code}`)).status, 404);
+});
+
+test("the apex root is not a short code namespace", async () => {
+  const { body } = await createLink("https://xen.autos/tools", ADMIN_ENV, "xen.autos");
+  assert.equal(body.short, `https://xen.autos/s/${body.code}`);
+
+  // /<code> must stay a 404 so future pages keep the root path free
+  assert.equal((await call(`/${body.code}`, {}, "xen.autos")).status, 404);
+  assert.equal((await call(`/${body.code}+`, {}, "xen.autos")).status, 404);
+
   const portal = await call("/", { headers: { accept: "text/html" } }, "xen.autos");
   assert.match(await portal.text(), /xentool/);
-
-  // on the apex the /s prefix is dropped from generated links
-  const page = await call("/s/", { headers: { accept: "text/html" } }, "xen.autos");
-  assert.match(await page.text(), /xen\.autos\/abc123/);
-  assert.doesNotMatch(await (await call("/s/", { headers: { accept: "text/html" } }, "xen.autos")).text(), /xen\.autos\/s\/abc123/);
 });
 
 test("short rejects invalid input and unknown codes", async () => {
-  const bad = await call("/s/api", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ url: "not a url" }),
-  });
+  const bad = await call(
+    "/s/api",
+    {
+      method: "POST",
+      headers: { ...BEARER, "content-type": "application/json" },
+      body: JSON.stringify({ url: "not a url" }),
+    },
+    "tool.xen.autos",
+    ADMIN_ENV,
+  );
   assert.equal(bad.status, 400);
 
-  const badTtl = await call("/s/api", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ url: "example.com", ttl: 5 }),
-  });
+  const badTtl = await call(
+    "/s/api",
+    {
+      method: "POST",
+      headers: { ...BEARER, "content-type": "application/json" },
+      body: JSON.stringify({ url: "example.com", ttl: 5 }),
+    },
+    "tool.xen.autos",
+    ADMIN_ENV,
+  );
   assert.equal(badTtl.status, 400);
 
   assert.equal((await call("/s/zzzzzzzz")).status, 404);
 });
 
 test("short counts clicks through waitUntil without blocking the redirect", async () => {
-  const created = await call("/s/api", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ url: "https://example.com/async" }),
-  });
-  const { code } = await created.json();
+  const { body } = await createLink("https://example.com/async");
+  const { code } = body;
 
   const pending = [];
-  const visit = await call(`/s/${code}`, {}, "tool.xen.autos", {}, {
-    waitUntil: (promise) => pending.push(promise),
-  });
+  const visit = await call(
+    `/s/${code}`,
+    {},
+    "tool.xen.autos",
+    {},
+    { waitUntil: (promise) => pending.push(promise) },
+  );
   assert.equal(visit.status, 302);
   assert.equal(pending.length, 1, "click count must go through waitUntil");
 
   await Promise.all(pending);
-  assert.equal((await (await call(`/s/${code}+`)).json()).hits, 1);
-});
-
-test("short renders a create page for browsers", async () => {
-  const res = await call("/s/", { headers: { accept: "text/html" } });
-  assert.equal(res.status, 200);
-  assert.match(res.headers.get("content-type"), /text\/html/);
-  const html = await res.text();
-  assert.match(html, /短链/);
-  assert.match(html, /生成短链/);
-  assert.match(html, /返回工具库/);
+  const stats = await call(`/s/${code}+`, { headers: BEARER }, "tool.xen.autos", ADMIN_ENV);
+  assert.equal((await stats.json()).hits, 1);
 });
 
 test("unknown routes return 404", async () => {

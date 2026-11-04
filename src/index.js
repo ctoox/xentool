@@ -3,7 +3,7 @@
  *
  * Zero-config by design: one Worker, one `npx wrangler deploy`.
  *   tool.xen.autos  → portal + tools under path prefixes (/paste, /s, /tools)
- *   xen.autos       → same, plus short links at the root (/abc123)
+ *   xen.autos       → the same, so the apex stays available for future use
  *
  * Tools are self-contained modules under tools/<id>/. If a dedicated hostname
  * is bound later (e.g. paste.xen.autos), the same module is served by host
@@ -11,6 +11,10 @@
  *
  * The portal never proxies tool traffic. Tool modules run in-process today;
  * promoting one to its own Worker later only changes deployment, not routing.
+ *
+ * Routing rule: no tool may claim the bare root path. `/<code>` style routes
+ * would make every future page share a namespace with random short codes, so
+ * short links live under /s/ and the root stays free.
  */
 import { json, html, health, notFound, PROTOCOL_VERSION } from "../packages/core/index.js";
 import { CATALOG, SITE, portalTools } from "./catalog.js";
@@ -21,17 +25,6 @@ import * as paste from "../tools/paste/src/index.js";
 import * as short from "../tools/short/src/index.js";
 
 const HANDLERS = { paste: paste.handle, short: short.handle };
-
-// Hosts where the short-link tool owns the root path, so links are as short as
-// possible (xen.autos/abc123). Adding a host here is the only change needed
-// once the domain is bound as a Custom Domain on this Worker.
-const APEX_HOSTS = new Set(["xen.autos"]);
-
-// On the apex, the tool's own control surface folds back to basePath "".
-const APEX_SHORT_ALIASES = new Map([
-  ["/s", "/"],
-  ["/s/", "/"],
-]);
 
 /**
  * Builds the context handed to tool modules. `waitUntil` is re-bound rather
@@ -97,18 +90,8 @@ export async function handleRequest(request, env = {}, ctx = {}) {
     (tool) => url.pathname === tool.path || url.pathname.startsWith(`${tool.path}/`),
   );
   if (byPath && HANDLERS[byPath.id]) {
-    // On an apex host the short tool drops its prefix, so generated links are
-    // xen.autos/abc123 instead of xen.autos/s/abc123 (both keep working).
-    const basePath = APEX_HOSTS.has(host) && byPath.id === "short" ? "" : byPath.path;
     const path = url.pathname.slice(byPath.path.length) || "/";
-    return HANDLERS[byPath.id](request, env, toolContext({ path, basePath, host }, ctx));
-  }
-
-  // Apex fallback: a single path segment that no real route claimed is a short
-  // code. Anything deeper stays a 404 so typos don't get masked.
-  if (APEX_HOSTS.has(host) && /^\/[^/]*$/.test(url.pathname)) {
-    const path = APEX_SHORT_ALIASES.get(url.pathname) ?? url.pathname;
-    return HANDLERS.short(request, env, toolContext({ path, basePath: "", host }, ctx));
+    return HANDLERS[byPath.id](request, env, toolContext({ path, basePath: byPath.path, host }, ctx));
   }
 
   return notFound();

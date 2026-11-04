@@ -47,7 +47,7 @@ export const CATALOG = [
   {
     id: "short",
     name: "短链",
-    description: "长链接变短，带点击统计。根域名直达：xen.autos/abc123。",
+    description: "长链接变短，带点击统计。控制台需管理员口令。",
     path: "/s",
     href: "/s/",
     host: "",
