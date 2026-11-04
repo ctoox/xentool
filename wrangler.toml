@@ -11,16 +11,15 @@ compatibility_date = "2024-11-01"
 [observability]
 enabled = true
 
-# Everything below is optional. The default deploy needs none of it.
-#
-# Durable storage for tools (without it, tools use a non-durable in-memory
-# fallback, which is fine for smoke tests but not for real data):
+# The KV binding `KV` (namespace "tool") is configured in the CF dashboard and
+# is intentionally NOT declared here, so no namespace id needs to be committed.
+# Verify after deploy: GET /paste/ should report storage="kv", durable=true.
+# If it reports "memory", the deploy replaced the dashboard binding; then add:
 # [[kv_namespaces]]
-# binding = "XENTOOL_KV"
+# binding = "KV"
 # id = "<namespace id>"
 #
-# Runtime tool catalog override, lets you list a new tool without redeploying
-# the portal (static src/catalog.js remains the fallback):
+# Optional runtime catalog override (static src/catalog.js remains the fallback):
 # [[kv_namespaces]]
 # binding = "CATALOG_KV"
 # id = "<namespace id>"

@@ -2,15 +2,16 @@
  * Storage adapter shared by tool Workers.
  *
  * Each tool passes its own prefix so tools may share one KV namespace without
- * key collisions. With no XENTOOL_KV binding it falls back to an in-memory
- * map, so tools remain runnable and testable in plain Node (no wrangler, no
- * credentials). The fallback is per-isolate and NOT durable.
+ * key collisions. In production the binding is `KV` (created in the CF
+ * dashboard, namespace "tool"); `XENTOOL_KV` is accepted as a fallback name.
+ * Without a binding it falls back to an in-memory map so tools stay runnable
+ * and testable in plain Node. That fallback is per-isolate and NOT durable.
  */
 
 const memory = new Map();
 
 export function createStore(env, prefix) {
-  const kv = env?.XENTOOL_KV ?? null;
+  const kv = env?.KV ?? env?.XENTOOL_KV ?? null;
   const scoped = (id) => `${prefix}:${id}`;
 
   return {

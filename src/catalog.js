@@ -19,3 +19,16 @@ export const CATALOG = [
     status: "available",
   },
 ];
+
+/** Shape consumed by both the JSON API and the portal page. */
+export function portalTools() {
+  return CATALOG.map((tool) => ({
+    id: tool.id,
+    name: tool.name,
+    description: tool.description,
+    path: tool.path,
+    href: `${tool.path}/`,
+    host: tool.host,
+    status: tool.status,
+  }));
+}

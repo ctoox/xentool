@@ -6,7 +6,7 @@ Cloudflare Worker tool platform. **One Worker, one domain, zero extra config** �
 
 | Path | Description |
 | --- | --- |
-| `GET /` | Tool catalog (HTML for browsers, JSON otherwise) |
+| `GET /` | Portal page (HTML for browsers, JSON otherwise) |
 | `GET /api/tools` | Machine-readable catalog |
 | `GET /health` | Portal health + protocol version |
 | `GET /ping` | Liveness probe |
@@ -20,7 +20,9 @@ curl -X POST https://tool.xen.autos/paste/api/paste \
 # -> {"id":"...","url":"https://tool.xen.autos/paste/<id>", ...}
 ```
 
-By default storage is an in-memory fallback (per-isolate, **not durable**). To make pastes persist, create a KV namespace and uncomment `[[kv_namespaces]]` in `wrangler.toml` for binding `XENTOOL_KV`. No code change needed — `createStore()` switches backend automatically.
+Storage uses the KV binding `KV` (namespace `tool`, configured in the Cloudflare dashboard). No namespace id is committed and no code branch is needed — `createStore()` picks `env.KV` automatically and only falls back to in-memory when the binding is absent.
+
+**Verify after deploy:** `GET /paste/` should report `"storage":"kv","durable":true`. If it reports `"memory"`, the deploy replaced the dashboard binding; add `[[kv_namespaces]]` with `binding = "KV"` and the namespace id to `wrangler.toml`.
 
 ## Architecture
 
@@ -30,6 +32,7 @@ Planning is kept in the code structure, not in the deployment topology.
 wrangler.toml          portal Worker (the only deployed Worker today)
 src/index.js           thin entry + Host/path dispatch
 src/catalog.js         tool catalog — DATA, not logic
+src/portal-page.js     standalone portal HTML (no external CSS/JS/assets)
 packages/core/         shared wire protocol (response format, errors, KV adapter)
 tools/<id>/src/        self-contained tool module, exports handle()
 tools/<id>/wrangler.toml  template for a future standalone Worker

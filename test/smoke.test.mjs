@@ -2,8 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { handleRequest } from "../src/index.js";
 
-function call(path, init = {}, host = "tool.xen.autos") {
-  return handleRequest(new Request(`https://${host}${path}`, init), {}, {});
+function call(path, init = {}, host = "tool.xen.autos", env = {}) {
+  return handleRequest(new Request(`https://${host}${path}`, init), env, {});
 }
 
 test("health and ping", async () => {
@@ -15,15 +15,22 @@ test("health and ping", async () => {
   assert.equal((await ping.json()).pong, true);
 });
 
-test("portal lists tools in JSON and HTML", async () => {
+test("portal renders a complete standalone page", async () => {
   const res = await call("/");
   const body = await res.json();
   assert.equal(body.tools[0].id, "paste");
   assert.equal(body.tools[0].path, "/paste");
-
-  const html = await call("/", { headers: { accept: "text/html" } });
-  assert.match(await html.text(), /href="\/paste\/"/);
   assert.equal(body.tools[0].href, "/paste/");
+
+  const page = await call("/", { headers: { accept: "text/html" } });
+  const html = await page.text();
+  assert.match(html, /<!doctype html>/);
+  assert.match(html, /lang="zh-CN"/);
+  assert.match(html, /href="\/paste\/"/);
+  assert.match(html, /已上线/);
+  assert.match(html, /prefers-color-scheme/);
+  assert.match(html, /github\.com\/ctoox\/xentool/);
+  assert.doesNotMatch(html, /<script src=/);
 });
 
 test("paste create then read via path", async () => {
@@ -50,6 +57,32 @@ test("paste accepts JSON body with ttl", async () => {
   assert.equal(created.status, 201);
   const { id } = await created.json();
   assert.equal(await (await call(`/paste/${id}`)).text(), "json body");
+});
+
+test("paste uses the dashboard KV binding when present", async () => {
+  const data = new Map();
+  const env = {
+    KV: {
+      get: async (key) => (data.has(key) ? data.get(key) : null),
+      put: async (key, value) => {
+        data.set(key, value);
+      },
+    },
+  };
+  const created = await call(
+    "/paste/api/paste",
+    { method: "POST", body: "durable" },
+    "tool.xen.autos",
+    env,
+  );
+  assert.equal(created.status, 201);
+  const { id, storage } = await created.json();
+  assert.equal(storage, "kv");
+  assert.equal(data.get(`paste:${id}`), "durable");
+  assert.equal(await (await call(`/paste/${id}`, {}, "tool.xen.autos", env)).text(), "durable");
+
+  const info = await call("/paste/", {}, "tool.xen.autos", env);
+  assert.equal((await info.json()).durable, true);
 });
 
 test("dedicated host routes to the same tool without code changes", async () => {

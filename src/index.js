@@ -10,7 +10,8 @@
  * promoting one to its own Worker later only changes deployment, not routing.
  */
 import { json, html, health, notFound, PROTOCOL_VERSION } from "../packages/core/index.js";
-import { CATALOG } from "./catalog.js";
+import { CATALOG, portalTools } from "./catalog.js";
+import { renderPortal } from "./portal-page.js";
 import * as paste from "../tools/paste/src/index.js";
 
 const HANDLERS = { paste: paste.handle };
@@ -37,9 +38,15 @@ export async function handleRequest(request, env = {}) {
   }
 
   // Portal + path routing (default, works immediately after deploy).
-  if (url.pathname === "/") return portal(request, host);
+  if (url.pathname === "/") {
+    const tools = portalTools();
+    if ((request.headers.get("accept") || "").includes("text/html")) {
+      return html(renderPortal({ tools, host }));
+    }
+    return json({ name: "xentool", host, protocol: PROTOCOL_VERSION, tools });
+  }
   if (url.pathname === "/api/tools") {
-    return json({ protocol: PROTOCOL_VERSION, tools: CATALOG });
+    return json({ protocol: PROTOCOL_VERSION, tools: portalTools() });
   }
 
   const byPath = CATALOG.find(
@@ -54,34 +61,6 @@ export async function handleRequest(request, env = {}) {
   }
 
   return notFound();
-}
-
-function portal(request, host) {
-  const tools = CATALOG.map((tool) => ({
-    id: tool.id,
-    name: tool.name,
-    description: tool.description,
-    path: tool.path,
-    href: `${tool.path}/`,
-    host: tool.host,
-    status: tool.status,
-  }));
-
-  if ((request.headers.get("accept") || "").includes("text/html")) {
-    const items = tools
-      .map(
-        (t) =>
-          `<li><a href="${t.href}">${t.name}</a> — ${t.description} <code>${t.href}</code></li>`,
-      )
-      .join("");
-    return html(
-      `<!doctype html><meta charset="utf-8"><title>xentool</title>` +
-        `<h1>xentool</h1><p>${host}</p><ul>${items}</ul>` +
-        `<p><a href="/api/tools">/api/tools</a> · <a href="/health">/health</a></p>`,
-    );
-  }
-
-  return json({ name: "xentool", host, protocol: PROTOCOL_VERSION, tools });
 }
 
 export default {
