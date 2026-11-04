@@ -1,0 +1,20 @@
+# Template only — NOT part of the current deploy.
+# Today paste is served in-process by the root Worker at tool.xen.autos/paste/.
+#
+# To promote paste into its own Worker later:
+#   1. bind Custom Domain paste.xen.autos to this Worker
+#      (Custom Domains are exact-match; wildcards are not supported)
+#   2. npx wrangler deploy --config tools/paste/wrangler.toml
+#   3. no portal code change: host routing in src/index.js activates automatically
+#
+# Optional durable storage, otherwise the module uses an in-memory fallback:
+# [[kv_namespaces]]
+# binding = "XENTOOL_KV"
+# id = "<namespace id>"
+
+name = "xentool-paste"
+main = "src/index.js"
+compatibility_date = "2024-11-01"
+
+[observability]
+enabled = true

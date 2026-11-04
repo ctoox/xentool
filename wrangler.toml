@@ -1,6 +1,26 @@
+# Portal Worker deployed by the existing Cloudflare project "xentool".
+# CF build settings: Root "/" + Deploy command "npx wrangler deploy".
+# Keep this file at the repository root and keep main = src/index.js.
+# tool.xen.autos is already bound as a Custom Domain in the CF dashboard.
+# Custom Domains are exact-match only — wildcard hostnames are not supported.
+
 name = "xentool"
 main = "src/index.js"
 compatibility_date = "2024-11-01"
 
 [observability]
 enabled = true
+
+# Everything below is optional. The default deploy needs none of it.
+#
+# Durable storage for tools (without it, tools use a non-durable in-memory
+# fallback, which is fine for smoke tests but not for real data):
+# [[kv_namespaces]]
+# binding = "XENTOOL_KV"
+# id = "<namespace id>"
+#
+# Runtime tool catalog override, lets you list a new tool without redeploying
+# the portal (static src/catalog.js remains the fallback):
+# [[kv_namespaces]]
+# binding = "CATALOG_KV"
+# id = "<namespace id>"

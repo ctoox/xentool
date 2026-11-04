@@ -1,11 +1,15 @@
 {
   "name": "xentool",
   "version": "1.0.0",
-  "description": "Cloudflare Worker utility tool",
+  "private": true,
+  "type": "module",
+  "description": "Cloudflare Worker tool platform",
   "main": "src/index.js",
   "scripts": {
+    "test": "node --test test/*.test.mjs",
     "dev": "npx wrangler dev",
-    "deploy": "npx wrangler deploy"
+    "deploy": "npx wrangler deploy",
+    "deploy:dry": "npx wrangler deploy --dry-run"
   },
   "devDependencies": {
     "wrangler": "^3.0.0"
