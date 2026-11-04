@@ -326,6 +326,376 @@ const CLIENT_JS = String.raw`
     panel.appendChild(block('结果', result));
   };
 
+  /* ------------------------------------------------------------- CIDR --- */
+
+  function ipToInt(ip) {
+    var parts = String(ip).trim().split('.');
+    if (parts.length !== 4) return null;
+    var n = 0;
+    for (var i = 0; i < 4; i++) {
+      var v = parseInt(parts[i], 10);
+      if (isNaN(v) || v < 0 || v > 255) return null;
+      n = n * 256 + v;
+    }
+    return n >>> 0;
+  }
+
+  function intToIp(n) {
+    return [(n >>> 24) & 255, (n >>> 16) & 255, (n >>> 8) & 255, n & 255].join('.');
+  }
+
+  VIEWS.cidr = function (panel) {
+    var input = line('192.168.1.0/24 或 10.0.0.5 255.255.255.0', '192.168.1.0/24');
+    var result = out('');
+    panel.appendChild(block('网段', input));
+    panel.appendChild(row(btn('计算', function () {
+      var raw = input.value.trim().replace(/\s+/, ' ');
+      var ip = null;
+      var bits = NaN;
+
+      if (raw.indexOf('/') > -1) {
+        var seg = raw.split('/');
+        ip = ipToInt(seg[0]);
+        bits = parseInt(seg[1], 10);
+      } else {
+        var parts = raw.split(' ');
+        ip = ipToInt(parts[0]);
+        var mask = parts[1] ? ipToInt(parts[1]) : null;
+        if (mask === null) {
+          result.textContent = '格式：192.168.1.0/24 或 10.0.0.5 255.255.255.0';
+          return;
+        }
+        bits = 0;
+        var m = mask >>> 0;
+        while (m & 0x80000000) { bits++; m = (m << 1) >>> 0; }
+      }
+
+      if (ip === null || isNaN(bits) || bits < 0 || bits > 32) {
+        result.textContent = '无法解析，请检查 IPv4 地址与掩码位数';
+        return;
+      }
+
+      var maskInt = bits === 0 ? 0 : ((0xFFFFFFFF << (32 - bits)) >>> 0);
+      var network = (ip & maskInt) >>> 0;
+      var broadcast = (network | (~maskInt >>> 0)) >>> 0;
+      var total = Math.pow(2, 32 - bits);
+      var usable;
+      var range;
+
+      if (bits >= 31) {
+        usable = total;
+        range = intToIp(network) + ' – ' + intToIp(broadcast);
+      } else {
+        usable = total - 2;
+        range = intToIp(network + 1) + ' – ' + intToIp(broadcast - 1);
+      }
+
+      result.textContent = [
+        'CIDR        ' + intToIp(network) + '/' + bits,
+        '掩码        ' + intToIp(maskInt),
+        '通配符      ' + intToIp(~maskInt >>> 0),
+        '网络地址    ' + intToIp(network),
+        '广播地址    ' + intToIp(broadcast),
+        '可用主机    ' + range,
+        '主机数      ' + usable
+      ].join('\n');
+    }, true), copyBtn(function () { return result.textContent; })));
+    panel.appendChild(block('结果', result));
+  };
+
+  /* ------------------------------------------------------------- Cron --- */
+
+  function parseCronField(text, min, max) {
+    var raw = String(text).trim();
+    if (!raw) return null;
+
+    var set = {};
+    var chunks = raw.split(',');
+    for (var i = 0; i < chunks.length; i++) {
+      var chunk = chunks[i].trim();
+      if (!chunk) return null;
+
+      var step = 1;
+      var body = chunk;
+      var slash = chunk.indexOf('/');
+      if (slash > -1) {
+        body = chunk.slice(0, slash);
+        step = parseInt(chunk.slice(slash + 1), 10);
+        if (isNaN(step) || step < 1) return null;
+      }
+
+      var lo;
+      var hi;
+      if (body === '*') { lo = min; hi = max; }
+      else if (body.indexOf('-') > -1) {
+        var pair = body.split('-');
+        lo = parseInt(pair[0], 10);
+        hi = parseInt(pair[1], 10);
+      } else {
+        lo = parseInt(body, 10);
+        hi = slash > -1 ? max : lo;
+      }
+
+      if (isNaN(lo) || isNaN(hi) || lo < min || hi > max || lo > hi) return null;
+      for (var v = lo; v <= hi; v += step) set[v] = true;
+    }
+    return set;
+  }
+
+  function describeCronSet(set, min, max, unit) {
+    var values = [];
+    for (var v = min; v <= max; v++) if (set[v]) values.push(v);
+    if (values.length === max - min + 1) return '每' + unit;
+    if (!values.length) return '无匹配';
+    if (values.length > 12) return values.length + ' 个' + unit;
+    return values.join('、');
+  }
+
+  VIEWS.cron = function (panel) {
+    var input = line('如 0 9 * * 1-5', '0 9 * * 1-5');
+    var result = out('');
+    panel.appendChild(block('表达式', input));
+    panel.appendChild(block('常用', row(
+      btn('每分钟', function () { input.value = '* * * * *'; }, false),
+      btn('每天 9 点', function () { input.value = '0 9 * * *'; }, false),
+      btn('工作日 9 点', function () { input.value = '0 9 * * 1-5'; }, false),
+      btn('每 15 分钟', function () { input.value = '*/15 * * * *'; }, false)
+    )));
+    panel.appendChild(row(btn('解析', function () {
+      var fields = input.value.trim().split(/\s+/);
+      if (fields.length !== 5) {
+        result.textContent = '需要 5 个字段：分 时 日 月 周';
+        return;
+      }
+
+      var minute = parseCronField(fields[0], 0, 59);
+      var hour = parseCronField(fields[1], 0, 23);
+      var dom = parseCronField(fields[2], 1, 31);
+      var month = parseCronField(fields[3], 1, 12);
+      var dow = parseCronField(fields[4], 0, 6);
+
+      if (!minute || !hour || !dom || !month || !dow) {
+        result.textContent = '表达式无效：检查取值范围（分 0-59，时 0-23，日 1-31，月 1-12，周 0-6）';
+        return;
+      }
+
+      var domStar = fields[2] === '*';
+      var dowStar = fields[4] === '*';
+
+      var lines = [
+        '分钟    ' + describeCronSet(minute, 0, 59, '分钟'),
+        '小时    ' + describeCronSet(hour, 0, 23, '小时'),
+        '日期    ' + describeCronSet(dom, 1, 31, '天'),
+        '月份    ' + describeCronSet(month, 1, 12, '月'),
+        '星期    ' + describeCronSet(dow, 0, 6, '天')
+      ];
+
+      var cursor = new Date();
+      cursor.setSeconds(0, 0);
+      cursor.setMinutes(cursor.getMinutes() + 1);
+
+      var upcoming = [];
+      var guard = 0;
+      while (upcoming.length < 5 && guard < 200000) {
+        guard++;
+
+        var dayOk;
+        if (domStar && dowStar) dayOk = true;
+        else if (domStar) dayOk = Boolean(dow[cursor.getDay()]);
+        else if (dowStar) dayOk = Boolean(dom[cursor.getDate()]);
+        else dayOk = Boolean(dom[cursor.getDate()]) || Boolean(dow[cursor.getDay()]);
+
+        if (dayOk && month[cursor.getMonth() + 1] && hour[cursor.getHours()] && minute[cursor.getMinutes()]) {
+          upcoming.push(cursor.toLocaleString());
+        }
+        cursor = new Date(cursor.getTime() + 60000);
+      }
+
+      lines.push('');
+      lines.push(upcoming.length ? '接下来 ' + upcoming.length + ' 次：' : '一年内没有匹配时间：');
+      for (var i = 0; i < upcoming.length; i++) lines.push('  ' + upcoming[i]);
+
+      result.textContent = lines.join('\n');
+    }, true)));
+    panel.appendChild(block('结果', result));
+  };
+
+  /* ------------------------------------------------------------- Diff --- */
+
+  function splitLines(text) {
+    return String(text).replace(/\r\n/g, '\n').split('\n');
+  }
+
+  VIEWS.diff = function (panel) {
+    var left = area('原始文本…');
+    var right = area('修改后的文本…');
+    var result = out('');
+    panel.appendChild(block('原始', left));
+    panel.appendChild(block('修改后', right));
+    panel.appendChild(row(btn('对比', function () {
+      var a = splitLines(left.value);
+      var b = splitLines(right.value);
+      if (a.length > 500 || b.length > 500) {
+        result.textContent = '行数过多（上限 500 行），请分段比较';
+        return;
+      }
+
+      var rows = a.length;
+      var cols = b.length;
+      var table = [];
+      for (var i = 0; i <= rows; i++) {
+        table.push(new Array(cols + 1));
+        for (var j = 0; j <= cols; j++) table[i][j] = 0;
+      }
+      for (var r = rows - 1; r >= 0; r--) {
+        for (var c = cols - 1; c >= 0; c--) {
+          table[r][c] = a[r] === b[c]
+            ? table[r + 1][c + 1] + 1
+            : Math.max(table[r + 1][c], table[r][c + 1]);
+        }
+      }
+
+      var output = [];
+      var added = 0;
+      var removed = 0;
+      var x = 0;
+      var y = 0;
+      while (x < rows && y < cols) {
+        if (a[x] === b[y]) { output.push('  ' + a[x]); x++; y++; }
+        else if (table[x + 1][y] >= table[x][y + 1]) { output.push('- ' + a[x]); removed++; x++; }
+        else { output.push('+ ' + b[y]); added++; y++; }
+      }
+      while (x < rows) { output.push('- ' + a[x]); removed++; x++; }
+      while (y < cols) { output.push('+ ' + b[y]); added++; y++; }
+
+      result.textContent = '新增 ' + added + ' 行 · 删除 ' + removed + ' 行\n\n' + output.join('\n');
+    }, true), copyBtn(function () { return result.textContent; })));
+    panel.appendChild(block('差异', result));
+  };
+
+  /* --------------------------------------------------------- Markdown --- */
+
+  var TICK = String.fromCharCode(96);
+  var INLINE_RE = new RegExp(
+    '(\\*\\*[^*]+\\*\\*|\\*[^*\\n]+\\*|' + TICK + '[^' + TICK + ']+' + TICK + '|\\[[^\\]]+\\]\\([^)\\s]+\\))',
+    'g'
+  );
+
+  function inlineInto(parent, text) {
+    var last = 0;
+    var match;
+    INLINE_RE.lastIndex = 0;
+    while ((match = INLINE_RE.exec(text)) !== null) {
+      if (match.index > last) {
+        parent.appendChild(document.createTextNode(text.slice(last, match.index)));
+      }
+      var token = match[0];
+      if (token.indexOf('**') === 0) {
+        parent.appendChild(h('strong', { text: token.slice(2, -2) }));
+      } else if (token.charAt(0) === TICK) {
+        parent.appendChild(h('code', { text: token.slice(1, -1) }));
+      } else if (token.indexOf('[') === 0) {
+        var mid = token.indexOf('](');
+        var label = token.slice(1, mid);
+        var href = token.slice(mid + 2, -1);
+        if (/^https?:\/\//i.test(href)) {
+          parent.appendChild(h('a', { href: href, target: '_blank', rel: 'noopener', text: label }));
+        } else {
+          parent.appendChild(document.createTextNode(label));
+        }
+      } else {
+        parent.appendChild(h('em', { text: token.slice(1, -1) }));
+      }
+      last = match.index + token.length;
+    }
+    if (last < text.length) parent.appendChild(document.createTextNode(text.slice(last)));
+  }
+
+  function renderMarkdown(target, source) {
+    target.textContent = '';
+    var lines = String(source).split(/\n/);
+    var list = null;
+    var fence = TICK + TICK + TICK;
+
+    for (var i = 0; i < lines.length; i++) {
+      var line = lines[i];
+
+      if (line.indexOf(fence) === 0) {
+        var code = [];
+        i++;
+        while (i < lines.length && lines[i].indexOf(fence) !== 0) { code.push(lines[i]); i++; }
+        list = null;
+        var pre = h('pre', { class: 'code' });
+        pre.appendChild(document.createTextNode(code.join('\n')));
+        target.appendChild(pre);
+        continue;
+      }
+
+      if (!line.trim()) { list = null; continue; }
+
+      var heading = line.match(/^(#{1,4})\s+(.*)$/);
+      if (heading) {
+        list = null;
+        var size = heading[1].length;
+        var node = h('h' + Math.min(size + 1, 5), {});
+        inlineInto(node, heading[2]);
+        target.appendChild(node);
+        continue;
+      }
+
+      if (/^\s*([-*])\s+/.test(line)) {
+        if (!list || list.tagName !== 'UL') { list = h('ul', {}); target.appendChild(list); }
+        var li = h('li', {});
+        inlineInto(li, line.replace(/^\s*([-*])\s+/, ''));
+        list.appendChild(li);
+        continue;
+      }
+
+      if (/^\s*\d+\.\s+/.test(line)) {
+        if (!list || list.tagName !== 'OL') { list = h('ol', {}); target.appendChild(list); }
+        var oli = h('li', {});
+        inlineInto(oli, line.replace(/^\s*\d+\.\s+/, ''));
+        list.appendChild(oli);
+        continue;
+      }
+
+      if (line.indexOf('>') === 0) {
+        list = null;
+        var quote = h('blockquote', {});
+        inlineInto(quote, line.replace(/^>\s?/, ''));
+        target.appendChild(quote);
+        continue;
+      }
+
+      if (/^\s*(-{3,}|\*{3,})\s*$/.test(line)) {
+        list = null;
+        target.appendChild(h('hr', {}));
+        continue;
+      }
+
+      list = null;
+      var para = h('p', {});
+      inlineInto(para, line);
+      target.appendChild(para);
+    }
+  }
+
+  VIEWS.markdown = function (panel) {
+    var input = area('# 标题\n\n- 列表项\n- **加粗** 与 *斜体*\n\n> 引用');
+    var preview = h('div', { class: 'md' });
+    var status = h('div', { class: 'muted', text: '左侧输入，右侧实时渲染。' });
+    var split = h('div', { class: 'md-split' }, input, preview);
+    panel.appendChild(split);
+    panel.appendChild(status);
+
+    input.addEventListener('input', function () {
+      renderMarkdown(preview, input.value);
+      status.textContent = input.value.length + ' 字符 · ' + input.value.split(/\n/).length + ' 行';
+    });
+    renderMarkdown(preview, input.value);
+    status.textContent = input.value.length + ' 字符 · ' + input.value.split(/\n/).length + ' 行';
+  };
+
   var cleanup = null;
 
   function render(id) {
@@ -425,6 +795,20 @@ h1{margin:0;font-size:24px;font-weight:600;letter-spacing:-.02em}
 .btn.primary:hover{filter:brightness(1.06)}
 .out{background:rgba(0,0,0,.35);border:1px solid var(--line);border-radius:10px;padding:13px;font:12.5px/1.65 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:#cfd3dc;white-space:pre-wrap;word-break:break-all;min-height:44px;margin:0;max-height:340px;overflow:auto}
 .swatch{width:38px;height:38px;border-radius:9px;border:1px solid var(--line);background:#22d3ee}
+.md-split{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.md-split textarea{min-height:300px}
+.md{border:1px solid var(--line);border-radius:10px;background:rgba(0,0,0,.25);padding:16px;min-height:300px;max-height:520px;overflow:auto;font-size:13.5px;line-height:1.7}
+.md h2,.md h3,.md h4,.md h5{margin:14px 0 8px;font-size:15px;font-weight:600;letter-spacing:-.01em}
+.md h2:first-child{margin-top:0}
+.md p{margin:0 0 10px}
+.md ul,.md ol{margin:0 0 10px;padding-left:22px}
+.md li{margin:3px 0}
+.md code{font-family:ui-monospace,monospace;font-size:12.5px;background:rgba(255,255,255,.07);padding:1px 5px;border-radius:4px}
+.md pre.code{background:rgba(0,0,0,.45);border:1px solid var(--line);border-radius:8px;padding:12px;overflow:auto;font:12.5px/1.6 ui-monospace,monospace;white-space:pre-wrap;margin:0 0 10px}
+.md blockquote{margin:0 0 10px;padding:6px 0 6px 14px;border-left:2px solid rgba(34,211,238,.45);color:var(--dim)}
+.md hr{border:0;border-top:1px solid var(--line);margin:16px 0}
+.md a{color:var(--cyan)}
+@media (max-width:760px){.md-split{grid-template-columns:1fr}}
 .muted{color:var(--dim);font-size:13px}
 @media (max-width:760px){.wrap{grid-template-columns:1fr;gap:20px;padding:20px 16px 56px}nav{position:static;flex-direction:row;overflow-x:auto;gap:8px;padding-bottom:8px}nav .group{display:flex;gap:6px;align-items:center}.group-name{display:none}nav a{white-space:nowrap}h1{font-size:20px}}
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}

@@ -12,9 +12,16 @@ AI 工具库，运行在 Cloudflare Workers 边缘。**一个 Worker、一个域
 | --- | --- |
 | `GET /` | Portal page (HTML for browsers, JSON otherwise) |
 | `GET /api/tools` | Machine-readable catalog |
-| `GET /tools` | Workbench: 9 browser-side tools (URL, Base64, JSON, JWT, hash, UUID, timestamp, regex, color) |
+| `GET /tools` | Workbench: 13 browser-side tools (URL, Base64, JSON, JWT, hash, UUID, timestamp, regex, color, CIDR, cron, diff, Markdown) |
 | `GET /health` | Portal health + protocol version |
 | `GET /ping` | Liveness probe |
+| `GET /status/` | Capability dashboard — which Cloudflare bindings are live |
+| `GET /ai/` · `POST /ai/api/{summary,translate,embed,similar}` | Workers AI (admin by default) |
+| `GET /file/` · `POST /file/api` · `GET /file/<id>` | R2 file share, 25 MB, TTL up to 30 d |
+| `GET /hit/<name>` | Exact counter via Durable Object (`?op=peek` or `?op=reset`) |
+| `GET /room/<name>` | WebSocket broadcast room via Durable Object |
+| `GET /sql/` · `POST /sql/api` | Read-only D1 console (admin) |
+| `GET /kv/` · `GET /kv/api` | KV console; writes restricted to the `kv:` prefix (admin) |
 | `GET /paste/` | Paste tool info and limits |
 | `POST /paste/api/paste` | Create a paste: plain text or `{"content":"...","ttl":604800}` |
 | `GET /paste/<id>` | Read a paste |
@@ -58,7 +65,31 @@ Storage uses the KV binding `KV` (namespace `tool`). Both the KV binding and the
 
 **Verify after deploy:** `GET /paste/` should report `"storage":"kv","durable":true`. If it reports `"memory"`, the deploy replaced the dashboard binding; add `[[kv_namespaces]]` with `binding = "KV"` and the namespace id to `wrangler.toml`.
 
-Click counts are best-effort: KV has no atomic increment and is eventually consistent, so concurrent hits can undercount. The write goes through `ctx.waitUntil()` so the redirect is never delayed.
+Click counts are best-effort: KV has no atomic increment and is eventually consistent, so concurrent hits can undercount. The write goes through `ctx.waitUntil()` so the redirect is never delayed. `/hit/<name>` exists for the cases where exactness matters.
+
+### Cloudflare capabilities
+
+`/status/` is the single place to see what is actually available. The platform surface splits into two groups, and the difference matters at deploy time:
+
+**Enabled by the config alone** — no resource has to exist first, so they are always on:
+
+| Binding | Powers |
+| --- | --- |
+| `KV` | paste, short links, KV console |
+| `AI` (`[ai]`) | summary, translation, embeddings |
+| `COUNTER` / `ROOM` (Durable Objects + `[[migrations]]`) | exact counters, WebSocket rooms |
+| Cache API | edge caching (no binding needed) |
+
+**Requires a pre-created resource** — declared in `wrangler.toml` but commented out, because a placeholder id fails the build and takes auto-deploy down with it:
+
+```bash
+npx wrangler r2 bucket create xentool-files     # then uncomment [[r2_buckets]]
+npx wrangler d1 create xentool                  # copy the id, uncomment [[d1_databases]]
+npx wrangler d1 execute xentool --file=./schema.sql --remote
+npx wrangler queues create xentool-tasks        # optional, cron already sweeps
+```
+
+Every tool degrades instead of crashing: with the binding absent, the JSON endpoint reports `"available": false` and the operation returns 503 with the exact line to add. Nothing silently half-works.
 
 ### Admin auth
 
@@ -75,14 +106,20 @@ Planning is kept in the code structure, not in the deployment topology.
 
 ```
 wrangler.toml          portal Worker (the only deployed Worker today)
-src/index.js           thin entry + Host/path dispatch
+src/index.js           thin entry + Host/path dispatch + scheduled()/queue()
 src/catalog.js         tool catalog — DATA, not logic
 src/portal-page.js     standalone portal HTML (no external CSS/JS/assets)
-packages/core/         shared wire protocol (response format, errors, KV adapter)
+packages/core/         shared wire protocol (response format, errors, adapters)
+packages/core/bindings.js  capability probe — one source of truth for "is it on?"
+packages/core/ai.js    Workers AI adapter (chat / translate / embed)
+packages/core/blobs.js R2 adapter with expiry, memory fallback for tests
+packages/core/db.js    D1 adapter + read-only statement guard
+packages/core/objects.js   Durable Objects: Counter, Room
 packages/core/auth.js  admin auth primitive: bearer + signed cookie, fails closed
 packages/ui/shell.js   shared page shell for tool UIs (inline CSS, no assets)
 tools/<id>/src/        self-contained tool module, exports handle()
 tools/<id>/wrangler.toml  template for a future standalone Worker
+schema.sql             D1 schema for the SQL console
 test/                  plain Node tests, no wrangler or credentials needed
 ```
 

@@ -22,10 +22,14 @@ routes = [
 enabled = true
 
 # Secrets are NOT declared here — this file is committed.
-# Admin surfaces (short link console, create/list/delete/stats) require:
+# Admin surfaces (short links, KV console, SQL console, AI, file upload) expect:
 #   npx wrangler secret put ADMIN
 # For `wrangler dev`, put ADMIN in .dev.vars (gitignored).
 # Rotating the secret invalidates every existing admin session cookie.
+
+# ---------------------------------------------------------------------------
+# Bindings that need NO pre-created resource — always safe to deploy.
+# ---------------------------------------------------------------------------
 
 # Durable storage. Must be declared here: Wrangler treats this file as the
 # source of truth and drops dashboard-only bindings on the next deploy.
@@ -33,6 +37,69 @@ enabled = true
 [[kv_namespaces]]
 binding = "KV"
 id = "986df2ee8df44ffe8256254272eb4fef"
+
+# Workers AI. No provisioning step: the binding is enough.
+[ai]
+binding = "AI"
+
+# Durable Objects. Migration tag "v1" creates both classes on first deploy.
+# SQLite-backed storage is required on the free plan.
+[[durable_objects.bindings]]
+name = "COUNTER"
+class_name = "Counter"
+
+[[durable_objects.bindings]]
+name = "ROOM"
+class_name = "Room"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["Counter", "Room"]
+
+# Cron: sweep expired R2 objects. Safe with no R2 binding — the handler no-ops.
+[triggers]
+crons = ["*/15 * * * *"]
+
+# ---------------------------------------------------------------------------
+# Bindings that REQUIRE a pre-created resource.
+#
+# Do NOT uncomment these with a placeholder id. Wrangler validates them at
+# deploy time, so a fake database_id or a missing bucket turns the next
+# Workers Builds run red — which also stops the auto-deploy the team relies on.
+# Create the resource first, then paste the real identifier.
+# ---------------------------------------------------------------------------
+
+# R2 — file share tool (/file). Create the bucket once:
+#   npx wrangler r2 bucket create xentool-files
+# [[r2_buckets]]
+# binding = "R2"
+# bucket_name = "xentool-files"
+
+# D1 — SQL console (/sql). Create the database, then copy the id it prints:
+#   npx wrangler d1 create xentool
+# Then apply the schema:
+#   npx wrangler d1 execute xentool --file=./schema.sql --remote
+# [[d1_databases]]
+# binding = "DB"
+# database_name = "xentool"
+# database_id = "<paste the id from d1 create>"
+
+# Queues — background expiry sweep. Optional: the cron trigger already does it.
+#   npx wrangler queues create xentool-tasks
+# [[queues.producers]]
+# binding = "TASKS"
+# queue = "xentool-tasks"
+#
+# [[queues.consumers]]
+# queue = "xentool-tasks"
+# max_batch_size = 10
+# max_retries = 3
+
+# Vectorize — semantic search (/vector, still planned in the catalog).
+#   npx wrangler vectorize create xentool-index --dimensions=1024 --metric=cosine
+# [[vectorize]]
+# binding = "VECTORIZE"
+# index_name = "xentool-index"
 
 # Optional runtime catalog override (static src/catalog.js remains the fallback):
 # [[kv_namespaces]]

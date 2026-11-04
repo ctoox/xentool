@@ -16,15 +16,36 @@
  * would make every future page share a namespace with random short codes, so
  * short links live under /s/ and the root stays free.
  */
-import { json, html, health, notFound, PROTOCOL_VERSION } from "../packages/core/index.js";
+import { json, html, health, notFound, PROTOCOL_VERSION, createBlobs } from "../packages/core/index.js";
 import { CATALOG, SITE, portalTools } from "./catalog.js";
 import { renderPortal } from "./portal-page.js";
 import { renderToolsPage } from "./tools-page.js";
 import { FAVICON_SVG, FAVICON_HEADERS } from "./favicon.js";
 import * as paste from "../tools/paste/src/index.js";
 import * as short from "../tools/short/src/index.js";
+import * as ai from "../tools/ai/src/index.js";
+import * as file from "../tools/file/src/index.js";
+import * as kv from "../tools/kv/src/index.js";
+import * as sql from "../tools/sql/src/index.js";
+import * as hit from "../tools/hit/src/index.js";
+import * as room from "../tools/room/src/index.js";
+import * as status from "../tools/status/src/index.js";
 
-const HANDLERS = { paste: paste.handle, short: short.handle };
+const HANDLERS = {
+  paste: paste.handle,
+  short: short.handle,
+  ai: ai.handle,
+  file: file.handle,
+  kv: kv.handle,
+  sql: sql.handle,
+  hit: hit.handle,
+  room: room.handle,
+  status: status.handle,
+};
+
+// Durable Object classes must be exported from the entry module; the runtime
+// resolves `class_name` in wrangler.toml against these exports.
+export { Counter, Room } from "../packages/core/objects.js";
 
 /**
  * Builds the context handed to tool modules. `waitUntil` is re-bound rather
@@ -100,5 +121,38 @@ export async function handleRequest(request, env = {}, ctx = {}) {
 export default {
   fetch(request, env, ctx) {
     return handleRequest(request, env, ctx);
+  },
+
+  /**
+   * Cron entry point. R2 has no TTL, so expired objects are swept here — the
+   * read path already hides them, this just reclaims the storage. Without an
+   * R2 binding the sweep is a no-op rather than an error: the trigger stays
+   * configured, the deployment stays valid.
+   */
+  async scheduled(controller, env, ctx) {
+    const blobs = createBlobs(env, "file");
+    if (blobs.backend !== "r2") return;
+    ctx.waitUntil(blobs.sweepExpired({ limit: 200 }));
+  },
+
+  /**
+   * Queue consumer. Kept intentionally thin: the only background job today is
+   * the same expiry sweep, dispatched from the cron trigger. A queue is useful
+   * once expiry has to survive a failed cron run.
+   */
+  async queue(batch, env, ctx) {
+    const blobs = createBlobs(env, "file");
+    for (const message of batch.messages) {
+      if (message.body?.type !== "sweep") {
+        message.ack();
+        continue;
+      }
+      ctx.waitUntil(
+        blobs
+          .sweepExpired({ limit: 200 })
+          .then(() => message.ack())
+          .catch(() => message.retry()),
+      );
+    }
   },
 };

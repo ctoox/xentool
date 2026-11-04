@@ -12,6 +12,8 @@
 export const CATEGORIES = [
   { id: "encode", name: "编码转换" },
   { id: "dev", name: "开发辅助" },
+  { id: "net", name: "网络" },
+  { id: "text", name: "文本处理" },
 ];
 
 export const TOOLKIT = [
@@ -24,4 +26,8 @@ export const TOOLKIT = [
   { id: "time", name: "时间戳", desc: "时间戳与日期互转，含实时当前值。", category: "dev" },
   { id: "regex", name: "正则测试", desc: "实时匹配，列出命中位置与捕获组。", category: "dev" },
   { id: "color", name: "颜色转换", desc: "HEX / RGB / HSL 互转，带色块预览。", category: "dev" },
+  { id: "cidr", name: "CIDR 计算", desc: "子网掩码、网络地址、广播地址与可用主机范围。", category: "net" },
+  { id: "cron", name: "Cron 解释", desc: "解析五段表达式，说明含义并列出接下来几次触发。", category: "net" },
+  { id: "diff", name: "文本对比", desc: "逐行比对两段文本，标出新增、删除与相同行。", category: "text" },
+  { id: "markdown", name: "Markdown 预览", desc: "安全渲染常用语法，标题、列表、代码与强调。", category: "text" },
 ];

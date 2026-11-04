@@ -8,14 +8,15 @@
  * status "available" = clickable; "planned" = listed only, rendered as a
  * non-link card and its path returns 404.
  * host must be an exact hostname: Cloudflare Custom Domains do not support
- * wildcards and require an exact match.
+ * wildcards and require an exact match. Leave it empty unless the route is
+ * actually declared in wrangler.toml — a host here without a route is a lie.
  */
 import { TOOLKIT, CATEGORIES } from "./toolkit.js";
 
 export const SITE = {
   name: "xentool",
-  tagline: "AI 工具库",
-  description: "一个入口，聚合边缘侧的工具。编码、哈希、格式化在浏览器本地完成；存储与 AI 走 Cloudflare 边缘。",
+  tagline: "边缘工具库",
+  description: "一个入口，聚合 Cloudflare 边缘侧的全部能力：浏览器本地计算、KV 存储、R2 文件、D1 查询、Durable Objects 与 Workers AI。",
 };
 
 const categoryName = (id) => {
@@ -34,6 +35,16 @@ export const CATALOG = [
     status: "available",
     tags: [categoryName(tool.category)],
   })),
+  {
+    id: "ai",
+    name: "Workers AI",
+    description: "摘要、翻译、向量与相似度，在边缘推理，不需要自建模型服务。",
+    path: "/ai",
+    href: "/ai/",
+    host: "",
+    status: "available",
+    tags: ["Workers AI", "推理"],
+  },
   {
     id: "paste",
     name: "Paste",
@@ -55,24 +66,74 @@ export const CATALOG = [
     tags: ["KV", "存储"],
   },
   {
-    id: "ai-summary",
-    name: "AI 摘要",
-    description: "长文与网页摘要，基于 Workers AI 在边缘推理。",
-    path: "/ai/summary",
-    href: "/ai/summary",
+    id: "file",
+    name: "文件分享",
+    description: "上传即得链接，存 R2，到期自动清理，单文件 25 MB。",
+    path: "/file",
+    href: "/file/",
     host: "",
-    status: "planned",
-    tags: ["Workers AI"],
+    status: "available",
+    tags: ["R2", "对象存储"],
   },
   {
-    id: "ai-translate",
-    name: "AI 翻译",
-    description: "保留语气与格式的多语翻译。",
-    path: "/ai/translate",
-    href: "/ai/translate",
+    id: "hit",
+    name: "强一致计数",
+    description: "每个名字一个 Durable Object，并发下不丢计数。",
+    path: "/hit",
+    href: "/hit/",
+    host: "",
+    status: "available",
+    tags: ["Durable Objects", "计数"],
+  },
+  {
+    id: "room",
+    name: "实时房间",
+    description: "WebSocket 广播房间，空闲自动休眠，连接不断。",
+    path: "/room",
+    href: "/room/",
+    host: "",
+    status: "available",
+    tags: ["Durable Objects", "WebSocket"],
+  },
+  {
+    id: "sql",
+    name: "SQL 控制台",
+    description: "只读查询 D1，表结构与行数一览。需要管理员口令。",
+    path: "/sql",
+    href: "/sql/",
+    host: "",
+    status: "available",
+    tags: ["D1", "数据库"],
+  },
+  {
+    id: "kv",
+    name: "KV 控制台",
+    description: "浏览共享 namespace 的全部键，写入限定在 kv: 前缀。",
+    path: "/kv",
+    href: "/kv/",
+    host: "",
+    status: "available",
+    tags: ["KV", "运维"],
+  },
+  {
+    id: "status",
+    name: "平台能力",
+    description: "一页看清哪些 Cloudflare 绑定已就绪、哪些还没配置。",
+    path: "/status",
+    href: "/status/",
+    host: "",
+    status: "available",
+    tags: ["运维", "自检"],
+  },
+  {
+    id: "vector",
+    name: "语义检索",
+    description: "Vectorize 索引上的相似度搜索，配合向量化工具使用。",
+    path: "/vector",
+    href: "/vector/",
     host: "",
     status: "planned",
-    tags: ["Workers AI"],
+    tags: ["Vectorize"],
   },
 ];
 

@@ -103,18 +103,25 @@ git push          # 走 origin，自动镜像到 GitHub 并部署
 
 ```
 wrangler.toml            部署配置。唯一事实来源，见第 4 节第 1 条
-src/index.js             入口：Host/路径分发。只做路由，不写业务
+src/index.js             入口：Host/路径分发、queue()/scheduled()。只做路由，不写业务
 src/catalog.js           工具目录（数据）。门户和 JSON API 都读它
 src/toolkit.js           浏览器端工具的元数据（数据）
 src/portal-page.js       门户 HTML 渲染（内联 CSS/JS，无外部资源）
-src/tools-page.js        工作台单页，9 个浏览器端工具的实现
+src/tools-page.js        工作台单页，13 个浏览器端工具的实现
 src/favicon.js           内联 SVG favicon，零静态资源
+packages/core/index.js     桶文件：工具只从这里 import
 packages/core/response.js  统一响应格式、错误、CORS
 packages/core/store.js     KV 适配器（带内存兜底）
 packages/core/auth.js      管理面鉴权（Bearer + 签名 Cookie）
+packages/core/bindings.js  能力探测：哪些绑定真的可用
+packages/core/ai.js        Workers AI 适配器（chat / translate / embed）
+packages/core/blobs.js     R2 适配器（带内存兜底 + 过期清理）
+packages/core/db.js        D1 适配器 + 只读语句判定
+packages/core/objects.js   Durable Object 类：Counter、Room
 packages/ui/shell.js       工具页共用的页面外壳（内联 CSS）
 tools/<id>/src/index.js    自包含工具模块
 tools/<id>/wrangler.toml   未来拆成独立 Worker 的模板（当前不部署）
+schema.sql                D1 建表脚本（/sql 控制台用）
 test/smoke.test.mjs        端到端测试，直调 handleRequest
 ```
 
@@ -353,6 +360,54 @@ TTL 60s ~ 30d，默认 7d，上限 64 KiB。`burn: true` 阅后即焚。
 
 鉴权两种：`Authorization: Bearer <ADMIN>`，或登录后拿到的签名 Cookie。
 
+### ai（Workers AI）
+
+| 方法 | 路径 | 鉴权 | 说明 |
+| --- | --- | --- | --- |
+| GET | `/ai/` | — | 页面，或能力说明 JSON |
+| POST | `/ai/api/summary` | 需 | `{"text":"…","style":"brief\|bullets\|outline"}` |
+| POST | `/ai/api/translate` | 需 | `{"text":"…","source":"zh","target":"en"}` |
+| POST | `/ai/api/embed` | 需 | `{"text":"…"}` → 向量 |
+| POST | `/ai/api/similar` | 需 | `{"text":"…","candidates":["…"]}` |
+
+鉴权默认 fail-closed；设 `AI_PUBLIC=true` 可开放（会产生推理费用）。上限 12000 字符。
+
+### file（R2）
+
+| 方法 | 路径 | 鉴权 | 说明 |
+| --- | --- | --- | --- |
+| GET | `/file/` | — | 上传页，或能力说明 |
+| POST | `/file/api` | 需 | multipart 字段 `file`，或原始 body + `?name=&ttl=` |
+| GET | `/file/<id>` | 公开 | 下载；`?download=1` 强制附件 |
+| GET | `/file/api` | 需 | 列出对象 |
+| DELETE | `/file/api/<id>` | 需 | 删除 |
+
+上限 25 MB，TTL 300s ~ 30d。设 `FILE_PUBLIC=true` 可开放上传。
+
+### hit / room（Durable Objects）
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| GET | `/hit/<name>` | 自增并返回；`?op=peek` 只读；`?op=reset` 归零 |
+| GET | `/room/<name>` | WebSocket 升级即入房；无升级头返回房间概况 |
+
+`Counter` 串行化写入，并发下计数精确；KV 做不到。`Room` 用休眠 API，空闲不计费。
+
+### sql / kv（运维面，需要 ADMIN）
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| GET | `/sql/` · `/sql/login` | 控制台 / 登录 |
+| GET | `/sql/api/schema` | 表、字段、行数 |
+| POST | `/sql/api` | `{"sql":"select …"}`，**只读**，写语句在到达 D1 前被拒 |
+| GET | `/kv/api?prefix=` | 列出键 |
+| GET | `/kv/api/<key>` | 读值 |
+| PUT · DELETE | `/kv/api/<key>` | **仅限 `kv:` 前缀**，其他工具的数据不可写入 |
+
+### status
+
+`GET /status/` — 所有绑定的可用性一览。排查「为什么某个工具 503」从这里开始。
+
 ---
 
 ## 9. 基础设施用法
@@ -389,6 +444,64 @@ auth.clearedCookie();         // 清除用
 
 返回完整 HTML 文档，内联深色主题 CSS，自动注入 `window.__BASE = basePath` 供客户端拼接口路径。`style` 是页面级追加 CSS。
 
+### 能力探测 `capabilities(env)`
+
+```js
+import { capabilities } from "../../../packages/core/index.js";
+const caps = capabilities(env);
+caps.ai;      // true 仅当 env.AI.run 是函数
+caps.r2;      // true 仅当 env.R2.put/get 都是函数
+```
+
+新增工具时**不要自己嗅探 env**：一处判断，`/status` 和各工具的降级行为才不会说法不一。
+
+### Workers AI `createAI(env)`
+
+```js
+const ai = createAI(env);
+ai.available;                                    // 未绑定为 false
+await ai.chat({ prompt, system, maxTokens });    // → string
+await ai.translate({ text, source, target });    // → string
+await ai.embed(text);                            // → number[]
+```
+
+未绑定时抛 `AIUnavailable`，工具应转成 503，而不是让异常冒到 500。
+
+### 对象存储 `createBlobs(env, prefix)`
+
+```js
+const blobs = createBlobs(env, "file");
+await blobs.put(id, bytes, { contentType, expiresIn, name });
+await blobs.get(id);        // { body, size, contentType, name, expiresAt } | null
+await blobs.delete(id);
+await blobs.list({ limit: 100 });
+await blobs.sweepExpired(); // cron 调用
+blobs.backend;              // "r2" | "memory"
+```
+
+R2 **没有 TTL**：过期时间写进 `customMetadata.expiresAt`，读时兜底删除，cron 每 15 分钟回收一次。
+
+### D1 `createDb(env)`
+
+```js
+const db = createDb(env);
+db.available;
+await db.all("select 1");          // { rows, meta }
+await db.run("insert …");          // { meta }
+isReadOnly(sql);                   // 只读语句判定（/sql 用）
+```
+
+### Durable Objects
+
+类在 `packages/core/objects.js`，由 `src/index.js` 重新导出——**runtime 按 `class_name` 从入口模块解析导出名**，少一处就会在部署时报「class not found」。
+
+```js
+const stub = env.COUNTER.get(env.COUNTER.idFromName("deploys"));
+const res = await stub.fetch(new URL("https://do/?op=inc"));
+```
+
+测试里给一个 `{ idFromName, get: () => ({ fetch }) }` 的假命名空间即可，不需要真 DO。
+
 ---
 
 ## 10. 已知坑
@@ -405,6 +518,10 @@ auth.clearedCookie();         // 清除用
 | 302 后计数没变 | KV 最终一致，且计数走 `waitUntil` 后台写，刷新有延迟属正常 |
 | 部署版本号对不上 | Git 构建和手动 `wrangler deploy` 各发一次，谁后完成谁生效。看 `npx wrangler deployments list` 里的 `Source` 区分 |
 | 查不到 webhook 就以为没集成 | GitHub App 的 webhook 配在 App 层，**不会**出现在 `repos/<owner>/<repo>/hooks` 里。要看 check runs 或部署记录 |
+| 部署报 `database_id` / bucket 无效 | 用了占位 ID。R2 / D1 / Queues / Vectorize 必须先建资源，拿到真实 ID 再放开注释。否则整次构建失败，自动部署一起挂 |
+| 部署报 `class not found` | Durable Object 类没从入口模块导出。`src/index.js` 里的 `export { Counter, Room }` 不能少 |
+| `String.raw` 里写了 `${}` 却不报错 | `String.raw` 只关掉转义，**不关掉插值**。`${` 会被静默求值，页面照常返回但脚本是错的。提交前抽出客户端脚本跑一遍 `node --check` |
+| 缺绑定的工具返回 500 而不是 503 | 直接用了 `env.XXX`。先过 `capabilities(env)` 或用对应适配器的 `available` |
 
 ---
 
@@ -421,6 +538,9 @@ npm run deploy:dry     # 看包体积有没有异常膨胀（当前 ~83 KiB / gz
 - [ ] 管理面没密钥时是 401，不是放行
 - [ ] 用户输入都过了 `escapeHtml` 或 `textContent`
 - [ ] 新页面没有外部资源引用（搜一遍 `https://` 和 `<script src`）
+- [ ] 新工具在缺绑定时返回 503 + 可操作的提示，不是 500
+- [ ] 加了绑定就跑一次 `/status/`，确认这一项变成「可用」
+- [ ] 改了工作台客户端脚本：抽出来 `node --check` 一遍
 - [ ] 改了 `wrangler.toml` 就看部署输出里的绑定和域名行
 - [ ] `.dev.vars`、`.shots/`、`node_modules/`、`dist/` 没进 git
 
@@ -440,22 +560,20 @@ future page.
 按「值得做」排序，挑一个开工就行。做完记得更新 `src/catalog.js` 里的 `status`。
 
 **浏览器端（成本最低，不占 Worker CPU）**
-- 二维码生成 / 解析
-- CIDR / 子网计算
-- Cron 表达式解释
-- 文本 diff
-- Markdown 预览
+- 二维码生成 / 解析（需要完整的 QR 编码器，约 300 行位级代码；本地没有解码器可验证，建议单独一轮做并配手工扫码核对）
+- 时区批量转换
+- 图片压缩 / 格式转换
 
-**边缘端（要用 Cloudflare 其他能力）**
-- `[ai] binding = "AI"` → 摘要、翻译（catalog 里已有两条 `planned`）
-- R2 → 大文件临时分享（带过期）
-- D1 → 需要 SQL 查询/关联的工具
-- Durable Objects → 需要实时协作或强一致计数的场景（短链计数现在是最终一致）
+**边缘端**
+- Vectorize → `/vector` 语义检索（catalog 里 `status` 已是 `planned`，代码要走 `capabilities().vectorize`）
+- Queues 接管过期清理（现在 cron 已够用，队列只在「cron 跑失败也要清」时才值得）
+- D1 写入型工具（现在 `/sql` 只读，`schema.sql` 已经留了 `notes` 表）
 
 **平台能力**
-- **把 `npm test` 挂进构建**：现在 Build command 是 `None`，测试挂了照样能部署。改成 `npm test && npx wrangler deploy`（或加一个 `predeploy`）就能挡住
+- **把 `npm test` 挂进构建**：现在 Build command 是 `None`，测试挂了照样能部署。改成 `npm test && npx wrangler deploy`（或加一个 `predeploy`）就能挡住。这是当前最大的缺口
 - 给 `/api/tools` 加 OpenAPI 描述
-- 工具级限流
+- 工具级限流（AI 和上传现在只靠 ADMIN 把关，没有频率限制）
+- 短链计数改用 `Counter` DO，替换现在的最终一致方案
 
 ---
 
