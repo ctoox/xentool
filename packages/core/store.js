@@ -38,5 +38,10 @@ export function createStore(env, prefix) {
         expiresAt: expirationTtl ? Date.now() + expirationTtl * 1000 : null,
       });
     },
+
+    async delete(id) {
+      if (kv) return kv.delete(scoped(id));
+      memory.delete(scoped(id));
+    },
   };
 }

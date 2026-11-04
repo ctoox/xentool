@@ -11,14 +11,13 @@ compatibility_date = "2024-11-01"
 [observability]
 enabled = true
 
-# The KV binding `KV` (namespace "tool") is configured in the CF dashboard and
-# is intentionally NOT declared here, so no namespace id needs to be committed.
-# Verify after deploy: GET /paste/ should report storage="kv", durable=true.
-# If it reports "memory", the deploy replaced the dashboard binding; then add:
-# [[kv_namespaces]]
-# binding = "KV"
-# id = "<namespace id>"
-#
+# Durable storage. Must be declared here: Wrangler treats this file as the
+# source of truth and drops dashboard-only bindings on the next deploy.
+# Namespace "tool".
+[[kv_namespaces]]
+binding = "KV"
+id = "986df2ee8df44ffe8256254272eb4fef"
+
 # Optional runtime catalog override (static src/catalog.js remains the fallback):
 # [[kv_namespaces]]
 # binding = "CATALOG_KV"

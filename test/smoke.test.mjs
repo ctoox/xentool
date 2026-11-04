@@ -84,11 +84,52 @@ test("paste uses the dashboard KV binding when present", async () => {
   assert.equal(created.status, 201);
   const { id, storage } = await created.json();
   assert.equal(storage, "kv");
-  assert.equal(data.get(`paste:${id}`), "durable");
+  assert.equal(JSON.parse(data.get(`paste:${id}`)).content, "durable");
   assert.equal(await (await call(`/paste/${id}`, {}, "tool.xen.autos", env)).text(), "durable");
 
   const info = await call("/paste/", {}, "tool.xen.autos", env);
   assert.equal((await info.json()).durable, true);
+});
+
+test("paste renders a create page for browsers", async () => {
+  const res = await call("/paste/", { headers: { accept: "text/html" } });
+  assert.equal(res.status, 200);
+  assert.match(res.headers.get("content-type"), /text\/html/);
+  const html = await res.text();
+  assert.match(html, /创建链接/);
+  assert.match(html, /阅后即焚/);
+  assert.match(html, /返回工具库/);
+});
+
+test("paste view page escapes content and supports raw output", async () => {
+  const created = await call("/paste/api/paste", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ content: "<b>hi</b>", ttl: 120 }),
+  });
+  const { id } = await created.json();
+
+  const page = await call(`/paste/${id}`, { headers: { accept: "text/html" } });
+  assert.equal(page.status, 200);
+  assert.match(page.headers.get("cache-control"), /no-store/);
+  const html = await page.text();
+  assert.match(html, /&lt;b&gt;hi&lt;\/b&gt;/);
+  assert.doesNotMatch(html, /<b>hi<\/b>/);
+
+  const raw = await call(`/paste/${id}?raw=1`, { headers: { accept: "text/html" } });
+  assert.equal(await raw.text(), "<b>hi</b>");
+});
+
+test("burn after read destroys the paste", async () => {
+  const created = await call("/paste/api/paste", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ content: "once", ttl: 120, burn: true }),
+  });
+  const { id, burn } = await created.json();
+  assert.equal(burn, true);
+  assert.equal(await (await call(`/paste/${id}`)).text(), "once");
+  assert.equal((await call(`/paste/${id}`)).status, 404);
 });
 
 test("dedicated host routes to the same tool without code changes", async () => {
