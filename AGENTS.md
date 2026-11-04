@@ -50,6 +50,51 @@ ADMIN=dev-only-password
 
 ---
 
+## 2.5 Git 拓扑（团队协作从这里开始）
+
+主库在内网 Forgejo `git.xen`，GitHub 只是**部署管道**。
+
+| remote | 地址 | 用途 |
+| --- | --- | --- |
+| `origin` | `http://git.xen/xen/xentool.git` | **主库**，日常 push 到这里 |
+| `github` | `https://github.com/ctoox/xentool.git` | 只读镜像，**不要直接 push** |
+| 副本 | `http://10.144.144.12:3000/xen/xentool.git` | mesh 上的 pull 镜像，10 分钟同步一次 |
+
+完整链路：
+
+```
+git push
+  → git.xen  (Forgejo, 192.168.31.203)
+  → push mirror  (sync_on_commit，实测 ~12s)
+  → GitHub ctoox/xentool
+  → Workers Builds  →  npx wrangler deploy  →  线上
+```
+
+**所以团队只需要一个 Forgejo 账号**：不用 GitHub 账号，不用 `gh auth login`，不用 `wrangler login`。
+
+```bash
+git clone http://git.xen/xen/xentool.git
+cd xentool
+npm install && npm test
+# 改代码
+git push          # 走 origin，自动镜像到 GitHub 并部署
+```
+
+三条纪律：
+
+1. **不要直接 push 到 GitHub。** 镜像是单向推送，你在 GitHub 上的提交会在下一次同步时被覆盖。
+2. **不要在两台 git.xen 上各推一版。** `10.144.144.12` 是 GitHub 的 pull 镜像（只读），往它推会被下次同步冲掉。
+3. **本机 git 的 socks5 代理会把 `git.xen` 也代理掉**，导致凭据助手报 `ServicePointManager 不支持具有 socks5 方案的代理`。一次性修掉：
+
+   ```bash
+   git config --global "http.http://git.xen.proxy" ""
+   git config --global "credential.http://git.xen.provider" generic
+   ```
+
+`git.xen` 关闭了自助注册，账号找管理员开。凭据用 Forgejo 的**访问令牌**（Settings → Applications → Generate New Token，勾 `write:repository`），不要用登录密码。
+
+---
+
 ## 3. 目录结构
 
 ```
