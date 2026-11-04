@@ -10,7 +10,7 @@
  * promoting one to its own Worker later only changes deployment, not routing.
  */
 import { json, html, health, notFound, PROTOCOL_VERSION } from "../packages/core/index.js";
-import { CATALOG, portalTools } from "./catalog.js";
+import { CATALOG, SITE, portalTools } from "./catalog.js";
 import { renderPortal } from "./portal-page.js";
 import * as paste from "../tools/paste/src/index.js";
 
@@ -41,7 +41,7 @@ export async function handleRequest(request, env = {}) {
   if (url.pathname === "/") {
     const tools = portalTools();
     if ((request.headers.get("accept") || "").includes("text/html")) {
-      return html(renderPortal({ tools, host }));
+      return html(renderPortal({ tools, host, site: SITE }));
     }
     return json({ name: "xentool", host, protocol: PROTOCOL_VERSION, tools });
   }

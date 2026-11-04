@@ -1,6 +1,8 @@
-# xentool
+# itools
 
-Cloudflare Worker tool platform. **One Worker, one domain, zero extra config** — pushing to `main` triggers the Cloudflare project `xentool` (`npx wrangler deploy`, root `/`) and the service is immediately live at `tool.xen.autos`.
+AI 工具库，运行在 Cloudflare Workers 边缘。**一个 Worker、一个域名、零额外配置** —— push 到 `main` 即触发 Cloudflare 项目 `xentool`（`npx wrangler deploy`，root `/`），服务立刻在 `tool.xen.autos` 生效。
+
+门户是深色、可搜索的工具库界面（光晕背景、玻璃卡片、指针跟随与卡片倾斜），完全内联渲染，无任何外部 CSS/JS/字体/图片依赖，因此门户不会因第三方资源失效而变丑或变慢。
 
 ## Live endpoints
 

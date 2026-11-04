@@ -27,10 +27,14 @@ test("portal renders a complete standalone page", async () => {
   assert.match(html, /<!doctype html>/);
   assert.match(html, /lang="zh-CN"/);
   assert.match(html, /href="\/paste\/"/);
+  assert.match(html, /itools/);
   assert.match(html, /已上线/);
-  assert.match(html, /prefers-color-scheme/);
+  assert.match(html, /即将上线/);
+  assert.match(html, /prefers-reduced-motion/);
   assert.match(html, /github\.com\/ctoox\/xentool/);
   assert.doesNotMatch(html, /<script src=/);
+  assert.equal(body.tools.length, 6);
+  assert.equal(body.tools[1].status, "planned");
 });
 
 test("paste create then read via path", async () => {
@@ -96,4 +100,6 @@ test("dedicated host routes to the same tool without code changes", async () => 
 test("unknown routes return 404", async () => {
   assert.equal((await call("/nope")).status, 404);
   assert.equal((await call("/paste/does-not-exist")).status, 404);
+  // planned tools are listed in the catalog but have no handler yet
+  assert.equal((await call("/chat/")).status, 404);
 });
