@@ -10,6 +10,7 @@ AI 工具库，运行在 Cloudflare Workers 边缘。**一个 Worker、一个域
 | --- | --- |
 | `GET /` | Portal page (HTML for browsers, JSON otherwise) |
 | `GET /api/tools` | Machine-readable catalog |
+| `GET /tools` | Workbench: 9 browser-side tools (URL, Base64, JSON, JWT, hash, UUID, timestamp, regex, color) |
 | `GET /health` | Portal health + protocol version |
 | `GET /ping` | Liveness probe |
 | `GET /paste/` | Paste tool info and limits |

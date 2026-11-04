@@ -1,77 +1,68 @@
 /**
  * Tool catalog — DATA, not logic.
  *
- * Adding a tool means adding one entry here. The portal Worker's code does not
- * change. Optionally the catalog can be overridden at runtime from
- * env.CATALOG_KV (key "tools", JSON array) so a new tool can be listed without
- * redeploying the portal at all; the static list is always the safe fallback.
+ * The browser-side tools come from src/toolkit.js (single source of truth),
+ * so adding a tool there automatically lists it on the portal. Server-side
+ * tools are declared explicitly below.
  *
+ * status "available" = clickable; "planned" = listed only, rendered as a
+ * non-link card and its path returns 404.
  * host must be an exact hostname: Cloudflare Custom Domains do not support
  * wildcards and require an exact match.
- * status "available" = has a handler in src/index.js HANDLERS and is clickable.
- * status "planned"   = listed only; the portal renders it as a non-link card.
  */
+import { TOOLKIT, CATEGORIES } from "./toolkit.js";
 
 export const SITE = {
   name: "xentool",
   tagline: "AI 工具库",
-  description: "一个入口，聚合边缘侧的 AI 工具。无需安装，打开即用。",
+  description: "一个入口，聚合边缘侧的工具。编码、哈希、格式化在浏览器本地完成；存储与 AI 走 Cloudflare 边缘。",
+};
+
+const categoryName = (id) => {
+  const found = CATEGORIES.find((cat) => cat.id === id);
+  return found ? found.name : id;
 };
 
 export const CATALOG = [
+  ...TOOLKIT.map((tool) => ({
+    id: tool.id,
+    name: tool.name,
+    description: tool.desc,
+    path: "/tools",
+    href: `/tools#${tool.id}`,
+    host: "",
+    status: "available",
+    tags: [categoryName(tool.category)],
+  })),
   {
     id: "paste",
     name: "Paste",
     description: "纯文本暂存，可自定义过期时间，链接即分享。",
     path: "/paste",
+    href: "/paste/",
     host: "paste.xen.autos",
     status: "available",
-    tags: ["KV", "Text"],
+    tags: ["KV", "存储"],
   },
   {
-    id: "chat",
-    name: "Chat",
-    description: "多模型对话，流式输出，会话可留存。",
-    path: "/chat",
-    host: "chat.xen.autos",
+    id: "ai-summary",
+    name: "AI 摘要",
+    description: "长文与网页摘要，基于 Workers AI 在边缘推理。",
+    path: "/ai/summary",
+    href: "/ai/summary",
+    host: "",
     status: "planned",
-    tags: ["LLM", "Stream"],
+    tags: ["Workers AI"],
   },
   {
-    id: "image",
-    name: "Image",
-    description: "文生图与局部重绘，结果直出 CDN。",
-    path: "/image",
-    host: "image.xen.autos",
+    id: "ai-translate",
+    name: "AI 翻译",
+    description: "保留语气与格式的多语翻译。",
+    path: "/ai/translate",
+    href: "/ai/translate",
+    host: "",
     status: "planned",
-    tags: ["Vision", "R2"],
-  },
-  {
-    id: "ocr",
-    name: "OCR",
-    description: "图片转文字，尽量保留原始版式。",
-    path: "/ocr",
-    host: "ocr.xen.autos",
-    status: "planned",
-    tags: ["Vision"],
-  },
-  {
-    id: "summarize",
-    name: "Summarize",
-    description: "长文与网页摘要，支持分块流式总结。",
-    path: "/summarize",
-    host: "summarize.xen.autos",
-    status: "planned",
-    tags: ["LLM", "Edge"],
-  },
-  {
-    id: "translate",
-    name: "Translate",
-    description: "即时翻译，保留原文语气与格式。",
-    path: "/translate",
-    host: "translate.xen.autos",
-    status: "planned",
-    tags: ["LLM"],
+    tags: ["Workers AI"],
   },
 ];
 
@@ -82,7 +73,7 @@ export function portalTools() {
     name: tool.name,
     description: tool.description,
     path: tool.path,
-    href: `${tool.path}/`,
+    href: tool.href || `${tool.path}/`,
     host: tool.host,
     status: tool.status,
     tags: tool.tags || [],

@@ -18,9 +18,9 @@ test("health and ping", async () => {
 test("portal renders a complete standalone page", async () => {
   const res = await call("/");
   const body = await res.json();
-  assert.equal(body.tools[0].id, "paste");
-  assert.equal(body.tools[0].path, "/paste");
-  assert.equal(body.tools[0].href, "/paste/");
+  assert.equal(body.tools[0].id, "url");
+  assert.equal(body.tools[0].path, "/tools");
+  assert.equal(body.tools[0].href, "/tools#url");
 
   const page = await call("/", { headers: { accept: "text/html" } });
   const html = await page.text();
@@ -35,8 +35,8 @@ test("portal renders a complete standalone page", async () => {
   assert.match(html, /rel="icon"/);
   assert.match(html, /theme-color/);
   assert.doesNotMatch(html, /<script src=/);
-  assert.equal(body.tools.length, 6);
-  assert.equal(body.tools[1].status, "planned");
+  assert.equal(body.tools.length, 12);
+  assert.equal(body.tools.filter((t) => t.status === "planned").length, 2);
 });
 
 test("paste create then read via path", async () => {
@@ -110,9 +110,22 @@ test("favicon is served and legacy .ico redirects", async () => {
   assert.equal(ico.headers.get("location"), "/favicon.svg");
 });
 
+test("workbench page renders the browser toolkit", async () => {
+  const res = await call("/tools");
+  assert.equal(res.status, 200);
+  assert.match(res.headers.get("content-type"), /text\/html/);
+  assert.match(res.headers.get("cache-control"), /max-age=300/);
+  const html = await res.text();
+  assert.match(html, /id="meta"/);
+  assert.match(html, /URL 编码/);
+  assert.match(html, /颜色转换/);
+  assert.match(html, /返回工具库/);
+  assert.doesNotMatch(html, /<script src=/);
+});
+
 test("unknown routes return 404", async () => {
   assert.equal((await call("/nope")).status, 404);
   assert.equal((await call("/paste/does-not-exist")).status, 404);
   // planned tools are listed in the catalog but have no handler yet
-  assert.equal((await call("/chat/")).status, 404);
+  assert.equal((await call("/ai/summary")).status, 404);
 });

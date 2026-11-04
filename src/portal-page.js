@@ -10,6 +10,19 @@ export function escapeHtml(value) {
 }
 
 const ICONS = {
+  url: '<path d="M9.5 14.5l5-5"/><path d="M8 11l-1.6 1.6a3.5 3.5 0 005 5L13 16"/><path d="M16 13l1.6-1.6a3.5 3.5 0 00-5-5L11 8"/>',
+  base64:
+    '<rect x="4" y="6" width="16" height="12" rx="2"/><path d="M7 10h2M11 10h2M15 10h2M7 14h2M11 14h2M15 14h2"/>',
+  json: '<path d="M9 5H8a2 2 0 00-2 2v3a2 2 0 01-2 2 2 2 0 012 2v3a2 2 0 002 2h1"/><path d="M15 5h1a2 2 0 012 2v3a2 2 0 002 2 2 2 0 00-2 2v3a2 2 0 01-2 2h-1"/>',
+  jwt: '<circle cx="9" cy="9" r="3"/><path d="M11.3 11.3L19 19M15.8 15.8l2-2M18 18l2-2"/>',
+  hash: '<path d="M9.5 4l-2 16M16.5 4l-2 16M4 9h16M3.5 15h16"/>',
+  uuid: '<rect x="4" y="6" width="16" height="12" rx="2"/><circle cx="9" cy="11" r="1.6"/><path d="M6.5 15.6c.6-1.4 1.6-2.1 2.5-2.1s1.9.7 2.5 2.1M14 10h4M14 13h4"/>',
+  time: '<circle cx="12" cy="12" r="8"/><path d="M12 8v4.3l3 1.8"/>',
+  regex: '<path d="M12 5v14M5.5 8.5l13 7M18.5 8.5l-13 7"/>',
+  color: '<path d="M12 4s5 5.6 5 9.2a5 5 0 01-10 0C7 9.6 12 4 12 4z"/>',
+  "ai-summary": '<path d="M12 4l1.7 4.6L18 10l-4.3 1.4L12 16l-1.7-4.6L6 10l4.3-1.4z"/>',
+  "ai-translate":
+    '<path d="M4 6h8M8 6v2c0 3-2 5-4 6"/><path d="M6 12c2 2 4 3 6 3"/><path d="M13 18l3-8 3 8M14.5 15h3"/>',
   paste:
     '<rect x="6" y="4" width="12" height="16" rx="2"/><path d="M9 4V3h6v1"/><path d="M9 9h6M9 13h6M9 17h3"/>',
   chat: '<path d="M4 5h16v10H9l-5 4V5z"/><path d="M8 9h8M8 12h5"/>',

@@ -35,12 +35,13 @@ export function text(body, status = 200, extraHeaders = {}) {
   });
 }
 
-export function html(body, status = 200) {
+export function html(body, status = 200, extraHeaders = {}) {
   return new Response(body, {
     status,
     headers: {
       "Content-Type": "text/html; charset=utf-8",
       "Access-Control-Allow-Origin": "*",
+      ...extraHeaders,
     },
   });
 }

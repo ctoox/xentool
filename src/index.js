@@ -12,6 +12,7 @@
 import { json, html, health, notFound, PROTOCOL_VERSION } from "../packages/core/index.js";
 import { CATALOG, SITE, portalTools } from "./catalog.js";
 import { renderPortal } from "./portal-page.js";
+import { renderToolsPage } from "./tools-page.js";
 import { FAVICON_SVG, FAVICON_HEADERS } from "./favicon.js";
 import * as paste from "../tools/paste/src/index.js";
 
@@ -38,8 +39,15 @@ export async function handleRequest(request, env = {}) {
     });
   }
 
+  // Workbench: browser-side tools, cached briefly at the edge.
+  if (url.pathname === "/tools" || url.pathname === "/tools/") {
+    return html(renderToolsPage({ host, site: SITE }), 200, {
+      "Cache-Control": "public, max-age=300",
+    });
+  }
+
   // Dedicated hostname (optional, activates as soon as the domain is bound).
-  const byHost = CATALOG.find((tool) => tool.host === host);
+  const byHost = CATALOG.find((tool) => tool.host && tool.host === host);
   if (byHost && HANDLERS[byHost.id]) {
     return HANDLERS[byHost.id](request, env, {
       path: url.pathname,
