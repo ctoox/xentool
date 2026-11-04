@@ -2,8 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { handleRequest } from "../src/index.js";
 
-function call(path, init = {}, host = "tool.xen.autos", env = {}) {
-  return handleRequest(new Request(`https://${host}${path}`, init), env, {});
+function call(path, init = {}, host = "tool.xen.autos", env = {}, ctx = {}) {
+  return handleRequest(new Request(`https://${host}${path}`, init), env, ctx);
 }
 
 test("health and ping", async () => {
@@ -231,6 +231,25 @@ test("short rejects invalid input and unknown codes", async () => {
   assert.equal(badTtl.status, 400);
 
   assert.equal((await call("/s/zzzzzzzz")).status, 404);
+});
+
+test("short counts clicks through waitUntil without blocking the redirect", async () => {
+  const created = await call("/s/api", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ url: "https://example.com/async" }),
+  });
+  const { code } = await created.json();
+
+  const pending = [];
+  const visit = await call(`/s/${code}`, {}, "tool.xen.autos", {}, {
+    waitUntil: (promise) => pending.push(promise),
+  });
+  assert.equal(visit.status, 302);
+  assert.equal(pending.length, 1, "click count must go through waitUntil");
+
+  await Promise.all(pending);
+  assert.equal((await (await call(`/s/${code}+`)).json()).hits, 1);
 });
 
 test("short renders a create page for browsers", async () => {

@@ -1,10 +1,13 @@
 /**
- * xentool — single Worker entry (tool.xen.autos).
+ * xentool — single Worker entry.
  *
- * Zero-config by design: one Worker, one domain, one `npx wrangler deploy`.
- * Tools are self-contained modules under tools/<id>/ and are reached by path.
- * If a dedicated hostname is bound later (e.g. paste.xen.autos), the same
- * module is served by host automatically — no code change required.
+ * Zero-config by design: one Worker, one `npx wrangler deploy`.
+ *   tool.xen.autos  → portal + tools under path prefixes (/paste, /s, /tools)
+ *   xen.autos       → same, plus short links at the root (/abc123)
+ *
+ * Tools are self-contained modules under tools/<id>/. If a dedicated hostname
+ * is bound later (e.g. paste.xen.autos), the same module is served by host
+ * automatically — no code change required.
  *
  * The portal never proxies tool traffic. Tool modules run in-process today;
  * promoting one to its own Worker later only changes deployment, not routing.
@@ -30,8 +33,21 @@ const APEX_SHORT_ALIASES = new Map([
   ["/s/", "/"],
 ]);
 
+/**
+ * Builds the context handed to tool modules. `waitUntil` is re-bound rather
+ * than passed by reference: ExecutionContext methods throw when detached.
+ */
+function toolContext({ path, basePath, host }, ctx) {
+  return {
+    path,
+    basePath,
+    host,
+    waitUntil:
+      typeof ctx?.waitUntil === "function" ? (promise) => ctx.waitUntil(promise) : undefined,
+  };
+}
 
-export async function handleRequest(request, env = {}) {
+export async function handleRequest(request, env = {}, ctx = {}) {
   const url = new URL(request.url);
   const host = (request.headers.get("host") || url.hostname)
     .split(":")[0]
@@ -62,11 +78,7 @@ export async function handleRequest(request, env = {}) {
   // Dedicated hostname (optional, activates as soon as the domain is bound).
   const byHost = CATALOG.find((tool) => tool.host && tool.host === host);
   if (byHost && HANDLERS[byHost.id]) {
-    return HANDLERS[byHost.id](request, env, {
-      path: url.pathname,
-      basePath: "",
-      host,
-    });
+    return HANDLERS[byHost.id](request, env, toolContext({ path: url.pathname, basePath: "", host }, ctx));
   }
 
   // Portal + path routing (default, works immediately after deploy).
@@ -88,21 +100,15 @@ export async function handleRequest(request, env = {}) {
     // On an apex host the short tool drops its prefix, so generated links are
     // xen.autos/abc123 instead of xen.autos/s/abc123 (both keep working).
     const basePath = APEX_HOSTS.has(host) && byPath.id === "short" ? "" : byPath.path;
-    return HANDLERS[byPath.id](request, env, {
-      path: url.pathname.slice(byPath.path.length) || "/",
-      basePath,
-      host,
-    });
+    const path = url.pathname.slice(byPath.path.length) || "/";
+    return HANDLERS[byPath.id](request, env, toolContext({ path, basePath, host }, ctx));
   }
 
   // Apex fallback: a single path segment that no real route claimed is a short
   // code. Anything deeper stays a 404 so typos don't get masked.
   if (APEX_HOSTS.has(host) && /^\/[^/]*$/.test(url.pathname)) {
-    return HANDLERS.short(request, env, {
-      path: APEX_SHORT_ALIASES.get(url.pathname) ?? url.pathname,
-      basePath: "",
-      host,
-    });
+    const path = APEX_SHORT_ALIASES.get(url.pathname) ?? url.pathname;
+    return HANDLERS.short(request, env, toolContext({ path, basePath: "", host }, ctx));
   }
 
   return notFound();
