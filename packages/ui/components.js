@@ -113,20 +113,50 @@ export function field({
 }
 
 /** Native select with the shared field styling. */
-export function select({ label = "", name = "", id = "", options = [], value = "", attrs: extra = {} } = {}) {  const inputId = id || name;
-  const opts = options
-    .map((opt) => {
-      const v = typeof opt === "object" ? opt.value : opt;
-      const text = typeof opt === "object" ? opt.label : opt;
-      return `<option value="${escapeHtml(v)}"${String(v) === String(value) ? " selected" : ""}>${escapeHtml(text)}</option>`;
-    })
+export function select({ label = "", name = "", id = "", options = [], value = "", attrs: extra = {} } = {}) {
+  const inputId = id || name || "";
+  const labelId = inputId ? `${inputId}-label` : "";
+  const items = options.map((opt) =>
+    typeof opt === "object" ? { value: opt.value, label: opt.label } : { value: opt, label: opt },
+  );
+  const current = items.find((item) => String(item.value) === String(value)) || items[0] || { value: "", label: "" };
+
+  const nativeOptions = items
+    .map(
+      (item) =>
+        `<option value="${escapeHtml(item.value)}"${String(item.value) === String(current.value) ? " selected" : ""}>${escapeHtml(item.label)}</option>`,
+    )
     .join("");
-  const control = `<select class="x-select"${attrs({ id: inputId, name, ...extra })}>${opts}</select>`;
+
+  const menuItems = items
+    .map(
+      (item, index) =>
+        `<div class="x-picker__option" role="option" tabindex="-1" data-value="${escapeHtml(item.value)}" data-index="${index}" aria-selected="${String(item.value) === String(current.value)}">${escapeHtml(item.label)}</div>`,
+    )
+    .join("");
+
+  /*
+   * Two controls, one value: the native select keeps the name/value pair (and
+   * is what a form or an existing page script reads), the button is what the
+   * user sees. shell.js flips .is-enhanced on and mirrors changes.
+   *
+   * The wrapper is a div, not a label: a label forwards clicks on any child to
+   * the button, so choosing an option would immediately reopen the menu.
+   */
+  const control = `<span class="x-select-wrap">
+  <select class="x-select-native"${attrs({ id: inputId || undefined, name: name || undefined, tabindex: "-1", "aria-hidden": "true", ...extra })}>${nativeOptions}</select>
+  <button type="button" class="x-picker"${attrs({ "aria-haspopup": "listbox", "aria-expanded": "false", ...(label ? { "aria-labelledby": labelId } : { "aria-label": "选项" }), id: inputId ? `${inputId}-btn` : undefined })}>
+    <span class="x-picker__value">${escapeHtml(current.label)}</span>
+    <svg class="x-picker__caret" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
+  </button>
+  <div class="x-picker__menu" role="listbox"${attrs({ "aria-labelledby": label ? labelId : undefined, "aria-label": label ? undefined : "选项" })} hidden>${menuItems}</div>
+</span>`;
+
   if (!label) return control;
-  return `<label class="x-field"${inputId ? attrs({ for: inputId }) : ""}>
-  <span class="x-field__label">${escapeHtml(label)}</span>
+  return `<div class="x-field">
+  <span class="x-field__label"${attrs({ id: labelId || undefined })}>${escapeHtml(label)}</span>
   ${control}
-</label>`;
+</div>`;
 }
 
 /** Checkbox with label, used by burn-after-read and similar toggles. */

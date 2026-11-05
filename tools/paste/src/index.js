@@ -72,6 +72,29 @@ export async function handle(request, env = {}, ctx = {}) {
     return create(request, store, host, basePath);
   }
 
+  /*
+   * Admin: list what is still alive and revoke a single paste. The page itself
+   * is inert HTML — it renders nothing until a token is supplied, and the API
+   * refuses everything without `Authorization: Bearer $ADMIN`.
+   */
+  if (path === "/admin" && request.method === "GET") {
+    if (!env.ADMIN) return wantsHtml ? html(renderMissingPage({ basePath }), 404, NO_STORE) : notFound();
+    return html(renderAdminPage({ basePath }), 200, NO_STORE);
+  }
+
+  if (path === "/api/admin/pastes" && request.method === "GET") {
+    if (!isAdmin(request, env)) return fail("unauthorized", 401);
+    return listPastes(store);
+  }
+
+  if (path.startsWith("/api/admin/pastes/") && request.method === "DELETE") {
+    if (!isAdmin(request, env)) return fail("unauthorized", 401);
+    const revokeId = path.slice("/api/admin/pastes/".length);
+    if (!ID_PATTERN.test(revokeId)) return fail("invalid id", 400);
+    await store.delete(revokeId);
+    return json({ ok: true, id: revokeId, revoked: true }, 200, NO_STORE);
+  }
+
   const id = path.slice(1);
   if (request.method === "GET" && ID_PATTERN.test(id)) {
     const record = await readRecord(store, id);
@@ -91,9 +114,10 @@ export async function handle(request, env = {}, ctx = {}) {
 
 async function create(request, store, host, basePath) {
   const raw = await request.text();
-  const size = new TextEncoder().encode(raw).length;
-  if (!raw || size > MAX_BYTES) {
-    return fail(`content must be 1-${MAX_BYTES} bytes`, size > MAX_BYTES ? 413 : 400);
+  // Cheap guard on the wire size first; the authoritative check happens below,
+  // on the decoded content (JSON escaping can inflate the body by ~2x).
+  if (!raw || raw.length > MAX_BYTES * 2) {
+    return fail(`content must be 1-${MAX_BYTES} bytes`, raw.length > MAX_BYTES * 2 ? 413 : 400);
   }
 
   let content = raw;
@@ -120,11 +144,22 @@ async function create(request, store, host, basePath) {
     burn = payload.burn === true;
   }
 
+  const size = new TextEncoder().encode(content).length;
+  if (!content || size > MAX_BYTES) {
+    return fail(`content must be 1-${MAX_BYTES} bytes`, size > MAX_BYTES ? 413 : 400);
+  }
+
   const id = crypto.randomUUID().replace(/-/g, "").slice(0, 10);
+  const createdAt = Date.now();
   await store.put(
     id,
-    JSON.stringify({ v: 1, content, createdAt: Date.now(), burn }),
-    { expirationTtl: ttl },
+    JSON.stringify({ v: 1, content, createdAt, burn }),
+    {
+      expirationTtl: ttl,
+      // The admin screen lists pastes straight from KV's key metadata, so
+      // listing never has to read (and therefore never burns) a value.
+      metadata: { createdAt, size, burn, preview: previewOf(content) },
+    },
   );
 
   return json(
@@ -140,7 +175,7 @@ async function create(request, store, host, basePath) {
   );
 }
 
-async function readRecord(store, id) {
+async function peekRecord(store, id) {
   const raw = await store.get(id);
   if (raw === null || raw === undefined) return null;
 
@@ -154,9 +189,50 @@ async function readRecord(store, id) {
     // legacy plain-text record
   }
   if (!record) record = { v: 0, content: raw, createdAt: null, burn: false };
-
-  if (record.burn) await store.delete(id);
   return record;
+}
+
+async function readRecord(store, id) {
+  const record = await peekRecord(store, id);
+  if (record && record.burn) await store.delete(id);
+  return record;
+}
+
+/* One line of context for the admin list; never the whole payload. */
+function previewOf(content) {
+  return String(content).replace(/\s+/g, " ").trim().slice(0, 60);
+}
+
+function isAdmin(request, env) {
+  const expected = env?.ADMIN;
+  if (!expected) return false;
+  const header = request.headers.get("authorization") || "";
+  if (!header.startsWith("Bearer ")) return false;
+  const token = header.slice(7).trim();
+  if (token.length !== expected.length) return false;
+  // Constant-time compare: a length-leaking early return is fine, a
+  // character-by-character early return is not.
+  let diff = 0;
+  for (let i = 0; i < token.length; i++) diff |= token.charCodeAt(i) ^ expected.charCodeAt(i);
+  return diff === 0;
+}
+
+async function listPastes(store) {
+  const entries = await store.entries({ limit: 200 });
+  const items = entries.map((entry) => {
+    const meta = entry.metadata || {};
+    return {
+      id: entry.id,
+      createdAt: meta.createdAt || null,
+      expiresAt: entry.expiresAt || null,
+      size: typeof meta.size === "number" ? meta.size : null,
+      burn: meta.burn === true,
+      preview: meta.preview || "",
+      legacy: !entry.metadata,
+    };
+  });
+  items.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+  return json({ ok: true, count: items.length, items }, 200, NO_STORE);
 }
 
 function renderCreatePage({ basePath, durable }) {
@@ -183,6 +259,10 @@ ${notice({
   title: "内容不经过第三方。",
   body: "文本直接写入 KV，链接之外没有索引；阅后即焚的条目在第一次读取后立刻删除。",
 })}
+</div>
+<div class="x-row" style="margin-top:14px">
+  ${btn({ label: "管理已分享的链接", href: `${basePath}/admin`, variant: "ghost" })}
+  <span class="x-muted" style="font-size:12.5px">可以让未到期的链接立刻失效。</span>
 </div>`;
 
   const script = String.raw`
@@ -266,6 +346,190 @@ function renderViewPage({ id, record, basePath }) {
 `;
 
   return page({ title: `Paste ${id}`, lead: "", body, script, basePath });
+}
+
+function renderAdminPage({ basePath }) {
+  const style = `
+.paste-admin__list{display:none}
+.paste-admin__table td.paste-nowrap{white-space:nowrap}
+.paste-item{border:1px solid var(--line);border-radius:12px;background:rgba(0,0,0,.18);padding:12px 14px;margin:0 0 10px}
+.paste-item__top{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.paste-item__top a{color:var(--ink);text-decoration:none;font-weight:600;font-size:13.5px}
+.paste-item__preview{margin:8px 0 0;font-size:13px;color:var(--ink-2);line-height:1.55;word-break:break-word}
+.paste-item__meta{margin:7px 0 0;font-size:12px;color:var(--dim);line-height:1.6}
+.paste-item__revoke{margin-left:auto}
+@media (max-width:700px){
+  .paste-admin__table{display:none}
+  .paste-admin__list{display:block}
+}
+`;
+
+  const body = `
+${card({
+  sub: "列出尚未过期的链接，并可以让其中任意一条立刻失效。删除后 KV 记录消失，再打开就是 404。",
+  body: `
+    <div class="x-row" style="align-items:flex-end;gap:10px">
+      <label class="x-field" style="flex:1 1 220px;margin:0;min-width:0">
+        <span class="x-field__label">管理令牌</span>
+        <input class="x-input" id="token" type="password" autocomplete="off" placeholder="服务端 ADMIN 变量">
+      </label>
+      <div class="x-row" style="margin:0;flex:none">
+        ${btn({ label: "解锁", variant: "primary", attrs: { id: "unlock" } })}
+        ${btn({ label: "刷新", variant: "ghost", attrs: { id: "refresh" } })}
+      </div>
+    </div>
+    <p class="error" id="error"></p>
+    <div id="panel"></div>
+  `,
+  foot: "令牌只存在当前标签页的 sessionStorage，关掉页面就没了；服务端用 ADMIN 变量比对。",
+})}`;
+
+  const script = String.raw`
+(function(){
+  var token = document.getElementById('token');
+  var unlock = document.getElementById('unlock');
+  var refresh = document.getElementById('refresh');
+  var error = document.getElementById('error');
+  var panel = document.getElementById('panel');
+
+  function esc(value){
+    var d = document.createElement('div');
+    d.textContent = value == null ? '' : String(value);
+    return d.innerHTML;
+  }
+  function size(n){
+    if (n == null) return '—';
+    if (n < 1024) return n + ' B';
+    return (n / 1024).toFixed(1) + ' KB';
+  }
+  function pad(n){ return (n < 10 ? '0' : '') + n; }
+  function time(ts){
+    if (!ts) return '—';
+    var d = new Date(ts);
+    return d.getFullYear() + '/' + pad(d.getMonth() + 1) + '/' + pad(d.getDate()) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+  }
+  function left(ts){
+    if (!ts) return '—';
+    var ms = ts - Date.now();
+    if (ms <= 0) return '已过期';
+    var hours = Math.floor(ms / 3600000);
+    if (hours < 1) return Math.max(1, Math.floor(ms / 60000)) + ' 分钟后';
+    if (hours < 24) return hours + ' 小时后';
+    return Math.floor(hours / 24) + ' 天后';
+  }
+
+  function previewOf(item){
+    if (item.legacy) return '<span class="x-muted">旧记录，没有元数据</span>';
+    if (!item.preview) return '<span class="x-muted">（空）</span>';
+    return esc(item.preview) + (item.preview.length >= 60 ? '…' : '');
+  }
+
+  function render(items){
+    if (!items.length){
+      panel.innerHTML = '<p class="x-muted" style="margin-top:14px">当前没有未过期的链接。</p>';
+      return;
+    }
+
+    var tableRows = items.map(function(item){
+      var href = window.__BASE + '/' + item.id;
+      return '<tr>' +
+        '<td><a href="' + esc(href) + '" target="_blank" rel="noopener"><b>' + esc(item.id) + '</b></a>' +
+          (item.burn ? ' <span class="x-badge x-badge--warn">阅后即焚</span>' : '') + '</td>' +
+        '<td class="paste-nowrap">' + esc(time(item.createdAt)) + '</td>' +
+        '<td class="paste-nowrap">' + esc(left(item.expiresAt)) + '<br><span class="x-muted" style="font-size:12px">' + esc(time(item.expiresAt)) + '</span></td>' +
+        '<td class="paste-nowrap">' + esc(size(item.size)) + '</td>' +
+        '<td>' + previewOf(item) + '</td>' +
+        '<td style="text-align:right"><button type="button" class="x-btn x-btn--danger" data-revoke="' + esc(item.id) + '">失效</button></td>' +
+      '</tr>';
+    }).join('');
+
+    var cards = items.map(function(item){
+      var href = window.__BASE + '/' + item.id;
+      return '<div class="paste-item">' +
+        '<div class="paste-item__top">' +
+          '<a href="' + esc(href) + '" target="_blank" rel="noopener">' + esc(item.id) + '</a>' +
+          (item.burn ? '<span class="x-badge x-badge--warn">阅后即焚</span>' : '') +
+          '<button type="button" class="x-btn x-btn--danger paste-item__revoke" data-revoke="' + esc(item.id) + '">失效</button>' +
+        '</div>' +
+        '<p class="paste-item__preview">' + previewOf(item) + '</p>' +
+        '<p class="paste-item__meta">剩余 ' + esc(left(item.expiresAt)) + ' · ' + esc(size(item.size)) +
+          (item.createdAt ? ' · 创建于 ' + esc(time(item.createdAt)) : '') + '</p>' +
+      '</div>';
+    }).join('');
+
+    panel.innerHTML =
+      '<div class="x-table-wrap paste-admin__table" style="margin-top:14px"><table class="x-table">' +
+        '<thead><tr><th>链接</th><th>创建</th><th>剩余</th><th>大小</th><th>内容预览</th><th></th></tr></thead>' +
+        '<tbody>' + tableRows + '</tbody></table></div>' +
+      '<div class="paste-admin__list" style="margin-top:14px">' + cards + '</div>' +
+      '<p class="x-muted" style="margin-top:10px;font-size:12.5px">共 ' + items.length + ' 条。点「失效」会立即删除，不可恢复。</p>';
+  }
+
+  function load(){
+    var value = token.value.trim();
+    error.textContent = '';
+    if (!value) { error.textContent = '先填管理令牌'; return; }
+    panel.innerHTML = '<p class="x-muted" style="margin-top:14px">读取中…</p>';
+    fetch(window.__BASE + '/api/admin/pastes', {
+      headers: { Authorization: 'Bearer ' + value },
+      cache: 'no-store'
+    }).then(function(r){
+      return r.json().then(function(data){ return { status: r.status, data: data }; });
+    }).then(function(res){
+      if (res.status === 401){
+        panel.innerHTML = '';
+        error.textContent = '令牌不对，或服务端没有配置 ADMIN。';
+        sessionStorage.removeItem('xentool.admin');
+        return;
+      }
+      if (res.status !== 200){
+        panel.innerHTML = '';
+        error.textContent = res.data.message || res.data.error || ('读取失败（' + res.status + '）');
+        return;
+      }
+      sessionStorage.setItem('xentool.admin', value);
+      render(res.data.items || []);
+    }).catch(function(e){
+      panel.innerHTML = '';
+      error.textContent = '网络错误：' + e.message;
+    });
+  }
+
+  function revoke(id){
+    if (!window.confirm('让 ' + id + ' 立刻失效？删除后无法恢复。')) return;
+    fetch(window.__BASE + '/api/admin/pastes/' + id, {
+      method: 'DELETE',
+      headers: { Authorization: 'Bearer ' + token.value.trim() }
+    }).then(function(r){
+      if (r.ok) { load(); return; }
+      return r.json().then(function(d){ error.textContent = d.message || d.error || '删除失败'; });
+    }).catch(function(e){ error.textContent = '网络错误：' + e.message; });
+  }
+
+  panel.addEventListener('click', function(event){
+    var button = event.target.closest('[data-revoke]');
+    if (button) revoke(button.getAttribute('data-revoke'));
+  });
+
+  unlock.addEventListener('click', load);
+  refresh.addEventListener('click', load);
+  token.addEventListener('keydown', function(event){
+    if (event.key === 'Enter') load();
+  });
+
+  var saved = sessionStorage.getItem('xentool.admin');
+  if (saved) { token.value = saved; load(); }
+})();
+`;
+
+  return page({
+    title: "Paste 管理",
+    lead: "未过期的链接都在这里，可以随时撤回。",
+    body,
+    style,
+    script,
+    basePath,
+  });
 }
 
 function renderMissingPage({ basePath }) {

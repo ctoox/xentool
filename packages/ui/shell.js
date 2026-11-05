@@ -63,8 +63,184 @@ h1{margin:0;font-size:26px;font-weight:600;letter-spacing:-.02em}
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}
 `;
 
+/*
+ * Upgrades every .x-select-wrap from components.js into a real dropdown.
+ *
+ * The value still lives in the native <select>, so page scripts that read
+ * document.getElementById('ttl').value keep working, and the change event
+ * fires on the native element — no page has to know this exists.
+ * Keyboard: ↑/↓ move, Enter/Space pick, Esc backs out, Home/End jump.
+ */
+const SELECT_SCRIPT = String.raw`
+(function () {
+  var wraps = Array.prototype.slice.call(document.querySelectorAll('.x-select-wrap'));
+
+  function closeOpen(event) {
+    var target = event && event.target;
+    // Scrolling inside the menu itself must not dismiss it.
+    if (target && target.nodeType === 1 && target.closest && target.closest('.x-picker__menu')) return;
+    wraps.forEach(function (wrap) {
+      if (wrap.classList.contains('is-open')) wrap.dispatchEvent(new Event('x-picker-close'));
+    });
+  }
+
+  window.addEventListener('scroll', closeOpen, true);
+  window.addEventListener('resize', closeOpen);
+
+  function closeOthers(current) {
+    wraps.forEach(function (wrap) {
+      if (wrap !== current && wrap.classList.contains('is-open')) wrap.dispatchEvent(new Event('x-picker-close'));
+    });
+  }
+
+  wraps.forEach(function (wrap) {
+    var native = wrap.querySelector('select');
+    var button = wrap.querySelector('.x-picker');
+    var menu = wrap.querySelector('.x-picker__menu');
+    var valueEl = wrap.querySelector('.x-picker__value');
+    if (!native || !button || !menu) return;
+
+    var options = Array.prototype.slice.call(menu.querySelectorAll('[role="option"]'));
+    var active = -1;
+    wrap.classList.add('is-enhanced');
+
+    function selectedIndex() {
+      for (var i = 0; i < options.length; i++) {
+        if (options[i].getAttribute('data-value') === native.value) return i;
+      }
+      return 0;
+    }
+
+    function sync() {
+      var index = selectedIndex();
+      options.forEach(function (option, i) {
+        option.setAttribute('aria-selected', i === index ? 'true' : 'false');
+      });
+      if (options[index]) valueEl.textContent = options[index].textContent;
+    }
+
+    function setActive(index) {
+      if (!options.length) return;
+      active = Math.max(0, Math.min(options.length - 1, index));
+      options.forEach(function (option, i) {
+        option.classList.toggle('is-active', i === active);
+      });
+      if (options[active].offsetTop + options[active].offsetHeight > menu.scrollTop + menu.clientHeight) {
+        options[active].scrollIntoView({ block: 'nearest' });
+      }
+    }
+
+    function place() {
+      var rect = button.getBoundingClientRect();
+      var width = Math.max(rect.width, 150);
+      menu.style.minWidth = width + 'px';
+      menu.style.left = Math.max(8, Math.min(rect.left, window.innerWidth - width - 8)) + 'px';
+
+      var below = window.innerHeight - rect.bottom - 8;
+      var height = menu.offsetHeight;
+      if (height > below && rect.top - 8 > below) {
+        menu.style.top = Math.max(8, rect.top - 6 - height) + 'px';
+      } else {
+        menu.style.top = rect.bottom + 6 + 'px';
+      }
+    }
+
+    function open() {
+      closeOthers(wrap);
+      // Portal to <body>: a card with overflow:hidden would otherwise clip the
+      // menu in half, and which card has a select changes per page.
+      if (menu.parentNode !== document.body) document.body.appendChild(menu);
+      menu.hidden = false;
+      button.setAttribute('aria-expanded', 'true');
+      wrap.classList.add('is-open');
+      setActive(selectedIndex());
+      place();
+    }
+
+    function close(returnFocus) {
+      menu.hidden = true;
+      button.setAttribute('aria-expanded', 'false');
+      wrap.classList.remove('is-open');
+      active = -1;
+      if (menu.parentNode !== wrap) wrap.appendChild(menu);
+      if (returnFocus) button.focus();
+    }
+
+    function choose(index) {
+      var option = options[index];
+      if (!option) return;
+      var next = option.getAttribute('data-value');
+      if (native.value !== next) {
+        native.value = next;
+        native.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+      sync();
+      close(true);
+    }
+
+    button.addEventListener('click', function (event) {
+      event.preventDefault();
+      if (menu.hidden) open();
+      else close(true);
+    });
+
+    options.forEach(function (option, index) {
+      option.addEventListener('click', function () { choose(index); });
+      option.addEventListener('mouseenter', function () { setActive(index); });
+    });
+
+    button.addEventListener('keydown', function (event) {
+      var key = event.key;
+      if (key === 'ArrowDown' || key === 'ArrowUp') {
+        event.preventDefault();
+        if (menu.hidden) open();
+        setActive(active < 0 ? selectedIndex() : active + (key === 'ArrowDown' ? 1 : -1));
+        return;
+      }
+      if (key === 'Enter' || key === ' ' || key === 'Spacebar') {
+        event.preventDefault();
+        if (menu.hidden) open();
+        else choose(active < 0 ? selectedIndex() : active);
+        return;
+      }
+      if (key === 'Escape' && !menu.hidden) {
+        event.preventDefault();
+        close(true);
+        return;
+      }
+      if (key === 'Tab' && !menu.hidden) {
+        close(false);
+        return;
+      }
+      if (key === 'Home') {
+        event.preventDefault();
+        open();
+        setActive(0);
+        return;
+      }
+      if (key === 'End') {
+        event.preventDefault();
+        open();
+        setActive(options.length - 1);
+      }
+    });
+
+    wrap.addEventListener('x-picker-close', function () { close(false); });
+    native.addEventListener('change', sync);
+
+    document.addEventListener('click', function (event) {
+      if (!wrap.contains(event.target)) close(false);
+    });
+
+    sync();
+  });
+})();
+`;
+
 export function shell({ title, body, basePath = "", script = "", style = "", wide = false, backLabel = "返回工具库" }) {
   const base = JSON.stringify(basePath).replace(/</g, "\\u003c");
+  // Only pages that actually render a picker pay for the script.
+  const pickerScript = body.indexOf("x-select-wrap") !== -1 ? SELECT_SCRIPT : "";
   return `<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -82,7 +258,7 @@ export function shell({ title, body, basePath = "", script = "", style = "", wid
 ${topbar({ brand: "xentool", back: "/", backLabel })}
 <main${wide ? ' class="wide"' : ""}>${body}</main>
 <script>window.__BASE=${base};</script>
-${script ? `<script>${script}</script>` : ""}
+${script || pickerScript ? `<script>${script}${pickerScript}</script>` : ""}
 </body>
 </html>`;
 }

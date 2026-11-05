@@ -91,6 +91,34 @@ export const COMPONENTS = String.raw`
 .x-check{display:inline-flex;align-items:center;gap:8px;font-size:13px;color:var(--ink-2);cursor:pointer;user-select:none;white-space:nowrap}
 .x-check input{width:15px;height:15px;accent-color:#22d3ee;cursor:pointer;margin:0}
 
+/* --------------------------------------------------------------- picker */
+/*
+ * The native <select> popup is drawn by the OS: on Windows it is a white list
+ * with its own font and padding, sitting on a near-black page. The closed
+ * control can be styled, the open one cannot — so the control is redrawn and
+ * the real select stays in the DOM (hidden, still holding the value) for form
+ * submission and for anyone with JS disabled.
+ */
+.x-select-wrap{position:relative;display:inline-block;max-width:100%}
+.x-select-native{width:100%;border:1px solid var(--line-2);border-radius:var(--r-sm);background:rgba(0,0,0,.32);color:var(--ink);font:var(--field-fs)/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC",sans-serif;padding:0 13px;height:40px}
+.x-select-wrap.is-enhanced .x-select-native{position:absolute;inset:0;opacity:0;pointer-events:none}
+.x-select-wrap.is-enhanced .x-picker{display:inline-flex}
+.x-picker{display:none;align-items:center;justify-content:space-between;gap:12px;min-width:150px;height:40px;padding:0 11px 0 13px;border:1px solid var(--line-2);border-radius:var(--r-sm);background:rgba(0,0,0,.32);color:var(--ink);font:var(--field-fs)/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC",sans-serif;cursor:pointer;text-align:left;transition:border-color .16s var(--ease),background .16s var(--ease),box-shadow .16s var(--ease)}
+.x-picker:hover{border-color:rgba(255,255,255,.22);background:rgba(255,255,255,.05)}
+.x-picker[aria-expanded="true"],.x-picker:focus-visible{outline:none;border-color:rgba(34,211,238,.55);box-shadow:var(--sh-glow);background:rgba(0,0,0,.45)}
+.x-picker__value{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.x-picker__caret{width:14px;height:14px;flex:none;fill:none;stroke:var(--dim);stroke-width:2;stroke-linecap:round;stroke-linejoin:round;transition:transform .18s var(--ease),stroke .18s var(--ease)}
+.x-picker[aria-expanded="true"] .x-picker__caret{transform:rotate(180deg);stroke:#22d3ee}
+.x-picker__menu{position:fixed;z-index:80;top:0;left:0;min-width:150px;max-height:280px;overflow:auto;padding:6px;border:1px solid var(--line-2);border-radius:12px;background:#0d1119;box-shadow:0 24px 48px -24px rgba(0,0,0,.95),0 2px 10px rgba(0,0,0,.45);animation:x-pop .14s var(--ease)}
+.x-picker__menu[hidden]{display:none}
+@keyframes x-pop{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}
+.x-picker__option{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:9px 11px;border-radius:8px;font-size:13px;color:var(--ink-2);cursor:pointer;white-space:nowrap}
+.x-picker__option:hover,.x-picker__option.is-active{background:rgba(255,255,255,.07);color:var(--ink)}
+.x-picker__option[aria-selected="true"]{color:var(--ink);background:rgba(34,211,238,.13)}
+.x-picker__option[aria-selected="true"]::after{content:"";width:6px;height:6px;border-radius:50%;background:#22d3ee;flex:none}
+@media (max-width:640px){.x-picker__menu{min-width:190px}}
+@media (prefers-reduced-motion:reduce){.x-picker__menu{animation:none}.x-picker__caret{transition:none}}
+
 /* ---------------------------------------------------------------- badge */
 .x-badge{display:inline-flex;align-items:center;gap:6px;height:22px;padding:0 9px;border-radius:999px;font:500 11.5px/1 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;letter-spacing:.01em;border:1px solid transparent;white-space:nowrap}
 .x-badge--ok{color:#6ee7b7;background:rgba(52,211,153,.12);border-color:rgba(52,211,153,.28)}

@@ -30,13 +30,22 @@ export function createStore(env, prefix) {
       return record.value;
     },
 
-    async put(id, value, { expirationTtl } = {}) {
+    /*
+     * `metadata` rides along with the key so an admin listing can show when a
+     * record was written without reading every value back. KV returns it from
+     * list(), which is a single call regardless of how many keys there are.
+     */
+    async put(id, value, { expirationTtl, metadata } = {}) {
       if (kv) {
-        return kv.put(scoped(id), value, expirationTtl ? { expirationTtl } : {});
+        const options = {};
+        if (expirationTtl) options.expirationTtl = expirationTtl;
+        if (metadata) options.metadata = metadata;
+        return kv.put(scoped(id), value, options);
       }
       memory.set(scoped(id), {
         value,
         expiresAt: expirationTtl ? Date.now() + expirationTtl * 1000 : null,
+        metadata: metadata || null,
       });
     },
 
@@ -46,6 +55,33 @@ export function createStore(env, prefix) {
     },
 
     /** Ids owned by this prefix, newest-first is the caller's job. */
+    /**
+     * Like list(), but with expiry and metadata — what an admin screen needs.
+     * Deleting is still the caller's job: listing must never destroy anything.
+     */
+    async entries({ limit = 200 } = {}) {
+      if (kv) {
+        const result = await kv.list({ prefix: keyPrefix, limit });
+        return result.keys.map((key) => ({
+          id: key.name.slice(keyPrefix.length),
+          expiresAt: key.expiration ? key.expiration * 1000 : null,
+          metadata: key.metadata || null,
+        }));
+      }
+      const entries = [];
+      for (const [key, record] of memory) {
+        if (!key.startsWith(keyPrefix)) continue;
+        if (record.expiresAt && record.expiresAt <= Date.now()) continue;
+        entries.push({
+          id: key.slice(keyPrefix.length),
+          expiresAt: record.expiresAt,
+          metadata: record.metadata || null,
+        });
+        if (entries.length >= limit) break;
+      }
+      return entries;
+    },
+
     async list({ limit = 200 } = {}) {
       if (kv) {
         const result = await kv.list({ prefix: keyPrefix, limit });
