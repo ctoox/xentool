@@ -628,126 +628,42 @@ const CLIENT_JS = String.raw`
   };
 
   /* --------------------------------------------------------- Markdown --- */
+  //
+  // The renderer is not here. It lives in src/toolkit-core/markdown.js and is
+  // served at /core/markdown.js, because the same parsing has to happen in
+  // three places: this preview, the /md share page (server-side), and the
+  // room chat. A second copy in this file was how the three quietly drifted
+  // apart — this one had no tables, no task lists, and no link allowlist.
 
-  var TICK = String.fromCharCode(96);
-  var INLINE_RE = new RegExp(
-    '(\\*\\*[^*]+\\*\\*|\\*[^*\\n]+\\*|' + TICK + '[^' + TICK + ']+' + TICK + '|\\[[^\\]]+\\]\\([^)\\s]+\\))',
-    'g'
-  );
+  /* This whole block is a String.raw template, so an escape sequence written
+     here lands in the emitted script verbatim. A literal newline typed inside
+     one of these JS strings produces a file that still passes a syntax check
+     and a page that renders nothing at all, so the newline is built instead of
+     written. */
+  var NL = String.fromCharCode(10);
 
-  function inlineInto(parent, text) {
-    var last = 0;
-    var match;
-    INLINE_RE.lastIndex = 0;
-    while ((match = INLINE_RE.exec(text)) !== null) {
-      if (match.index > last) {
-        parent.appendChild(document.createTextNode(text.slice(last, match.index)));
-      }
-      var token = match[0];
-      if (token.indexOf('**') === 0) {
-        parent.appendChild(h('strong', { text: token.slice(2, -2) }));
-      } else if (token.charAt(0) === TICK) {
-        parent.appendChild(h('code', { text: token.slice(1, -1) }));
-      } else if (token.indexOf('[') === 0) {
-        var mid = token.indexOf('](');
-        var label = token.slice(1, mid);
-        var href = token.slice(mid + 2, -1);
-        if (/^https?:\/\//i.test(href)) {
-          parent.appendChild(h('a', { href: href, target: '_blank', rel: 'noopener', text: label }));
-        } else {
-          parent.appendChild(document.createTextNode(label));
-        }
-      } else {
-        parent.appendChild(h('em', { text: token.slice(1, -1) }));
-      }
-      last = match.index + token.length;
-    }
-    if (last < text.length) parent.appendChild(document.createTextNode(text.slice(last)));
-  }
-
-  function renderMarkdown(target, source) {
-    target.textContent = '';
-    var lines = String(source).split(/\n/);
-    var list = null;
-    var fence = TICK + TICK + TICK;
-
-    for (var i = 0; i < lines.length; i++) {
-      var line = lines[i];
-
-      if (line.indexOf(fence) === 0) {
-        var code = [];
-        i++;
-        while (i < lines.length && lines[i].indexOf(fence) !== 0) { code.push(lines[i]); i++; }
-        list = null;
-        var pre = h('pre', { class: 'code' });
-        pre.appendChild(document.createTextNode(code.join('\n')));
-        target.appendChild(pre);
-        continue;
-      }
-
-      if (!line.trim()) { list = null; continue; }
-
-      var heading = line.match(/^(#{1,4})\s+(.*)$/);
-      if (heading) {
-        list = null;
-        var size = heading[1].length;
-        var node = h('h' + Math.min(size + 1, 5), {});
-        inlineInto(node, heading[2]);
-        target.appendChild(node);
-        continue;
-      }
-
-      if (/^\s*([-*])\s+/.test(line)) {
-        if (!list || list.tagName !== 'UL') { list = h('ul', {}); target.appendChild(list); }
-        var li = h('li', {});
-        inlineInto(li, line.replace(/^\s*([-*])\s+/, ''));
-        list.appendChild(li);
-        continue;
-      }
-
-      if (/^\s*\d+\.\s+/.test(line)) {
-        if (!list || list.tagName !== 'OL') { list = h('ol', {}); target.appendChild(list); }
-        var oli = h('li', {});
-        inlineInto(oli, line.replace(/^\s*\d+\.\s+/, ''));
-        list.appendChild(oli);
-        continue;
-      }
-
-      if (line.indexOf('>') === 0) {
-        list = null;
-        var quote = h('blockquote', {});
-        inlineInto(quote, line.replace(/^>\s?/, ''));
-        target.appendChild(quote);
-        continue;
-      }
-
-      if (/^\s*(-{3,}|\*{3,})\s*$/.test(line)) {
-        list = null;
-        target.appendChild(h('hr', {}));
-        continue;
-      }
-
-      list = null;
-      var para = h('p', {});
-      inlineInto(para, line);
-      target.appendChild(para);
-    }
-  }
-
-  VIEWS.markdown = function (panel) {
-    var input = area('# 标题\n\n- 列表项\n- **加粗** 与 *斜体*\n\n> 引用');
+  VIEWS.markdown = async function (panel) {
+    var md = await core('markdown.js');
+    var sample = ['# 标题', '', '- 列表项', '- **加粗** 与 *斜体*', '', '> 引用'].join(NL);
+    var input = area(sample);
+    // area() only sets a placeholder, so without this the preview pane starts
+    // blank and reads as broken rather than as idle.
+    input.value = sample;
     var preview = h('div', { class: 'md' });
-    var status = h('div', { class: 'muted', text: '左侧输入，右侧实时渲染。' });
+    var status = h('div', { class: 'muted', text: '' });
     var split = h('div', { class: 'md-split' }, input, preview);
     panel.appendChild(split);
     panel.appendChild(status);
 
-    input.addEventListener('input', function () {
-      renderMarkdown(preview, input.value);
-      status.textContent = input.value.length + ' 字符 · ' + input.value.split(/\n/).length + ' 行';
-    });
-    renderMarkdown(preview, input.value);
-    status.textContent = input.value.length + ' 字符 · ' + input.value.split(/\n/).length + ' 行';
+    function paint() {
+      // The renderer escapes every text run and allowlists link schemes, so
+      // this innerHTML is only ever fed markup that it produced itself.
+      preview.innerHTML = md.markdownToHtml(input.value);
+      status.textContent = input.value.length + ' 字符 · ' + input.value.split(NL).length + ' 行';
+    }
+
+    input.addEventListener('input', paint);
+    paint();
   };
 
   // ---- toolkit ports ------------------------------------------------------
@@ -2004,17 +1920,10 @@ h1{margin:0;font-size:23px;font-weight:600;letter-spacing:-.02em}
 .swatch{width:38px;height:38px;border-radius:9px;border:1px solid var(--line);background:#22d3ee;flex:none}
 .md-split{display:grid;grid-template-columns:1fr 1fr;gap:14px}
 .md-split textarea{min-height:300px}
-.md{border:1px solid var(--line);border-radius:10px;background:rgba(0,0,0,.25);padding:16px;min-height:300px;max-height:520px;overflow:auto;font-size:13.5px;line-height:1.7}
-.md h2,.md h3,.md h4,.md h5{margin:14px 0 8px;font-size:15px;font-weight:600;letter-spacing:-.01em}
-.md h2:first-child{margin-top:0}
-.md p{margin:0 0 10px}
-.md ul,.md ol{margin:0 0 10px;padding-left:22px}
-.md li{margin:3px 0}
-.md code{font-family:ui-monospace,monospace;font-size:12.5px;background:rgba(255,255,255,.07);padding:1px 5px;border-radius:4px}
-.md pre.code{background:rgba(0,0,0,.45);border:1px solid var(--line);border-radius:8px;padding:12px;overflow:auto;font:12.5px/1.6 ui-monospace,monospace;white-space:pre-wrap;margin:0 0 10px}
-.md blockquote{margin:0 0 10px;padding:6px 0 6px 14px;border-left:2px solid rgba(34,211,238,.45);color:var(--dim)}
-.md hr{border:0;border-top:1px solid var(--line);margin:16px 0}
-.md a{color:var(--cyan)}
+/* Only the box around the preview lives here; typography comes from the
+   shared .md block in the theme, so this preview and the /md share page
+   cannot disagree about what a heading looks like. */
+.md-split .md{border:1px solid var(--line);border-radius:10px;background:rgba(0,0,0,.25);padding:16px 18px;min-height:300px;max-height:520px;overflow:auto;font-size:13.5px}
 .muted{color:var(--dim);font-size:13px}
 
 /* Mobile catalog: a 240px sidebar cannot survive 100+ tools next to a 320px
@@ -2044,7 +1953,7 @@ h1{margin:0;font-size:23px;font-weight:600;letter-spacing:-.02em}
   h1{font-size:20px}
 }
 @media (max-width:640px){
-  .md-split textarea,.md{min-height:220px}
+  .md-split textarea,.md-split .md{min-height:220px}
 }
 @media (pointer:coarse){
   .btn{height:var(--tap);padding:0 16px}

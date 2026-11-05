@@ -46,6 +46,8 @@ const PAGES = [
   { name: "portal", path: "/" },
   { name: "workbench", path: "/tools" },
   { name: "paste", path: "/paste/" },
+  { name: "md", path: "/md/" },
+  { name: "room", path: "/room/" },
   { name: "short", path: "/s/" },
   { name: "status", path: "/status/" },
   { name: "ai", path: "/ai/" },

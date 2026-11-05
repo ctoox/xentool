@@ -77,14 +77,61 @@ const ROOM_SCRIPT = String.raw`
   var statusEl = document.getElementById('status');
   var statusText = document.getElementById('status-text');
   var errEl = document.getElementById('error');
+  var mdToggle = document.getElementById('md-toggle');
   var socket = null;
+  var parser = null;
+  var messages = [];
+  var renderMarkdown = localStorage.getItem('xentool.room.md') !== '0';
 
-  function line(text, cls){
+  /*
+   * The wire format is untouched: the object still broadcasts
+   * {type:"message", at, body} with the raw text, so history replay and older
+   * clients keep working and nothing needs migrating. Rendering happens here.
+   */
+  // /core/ is served from the site root, not from this tool's basePath.
+  import('/core/markdown.js').then(function(mod){
+    parser = mod;
+    restyle();
+  }).catch(function(){
+    renderMarkdown = false;
+    updateToggle();
+  });
+
+  function paint(entry){
+    if (!renderMarkdown || !parser || entry.system){
+      entry.node.textContent = entry.text;
+      return;
+    }
+    /* Anyone in the room can send anything. The renderer escapes every text
+     * run and allowlists link schemes, and it is the only thing keeping a
+     * pasted <script> out of every other member's tab. */
+    entry.node.innerHTML = parser.markdownToHtml(entry.text);
+  }
+
+  function restyle(){
+    for (var i = 0; i < messages.length; i++) paint(messages[i]);
+    log.scrollTop = log.scrollHeight;
+  }
+
+  function line(text, system){
     var div = document.createElement('div');
-    div.className = 'x-chat__msg' + (cls ? ' ' + cls : '');
-    div.textContent = text;
+    div.className = 'x-chat__msg' + (system ? ' x-chat__msg--sys' : '');
+    var entry = { text: text, system: !!system, node: div };
+    messages.push(entry);
+    paint(entry);
     log.appendChild(div);
     log.scrollTop = log.scrollHeight;
+  }
+
+  function updateToggle(){
+    var label = mdToggle.querySelector('span:last-child') || mdToggle;
+    label.textContent = renderMarkdown ? '渲染 markdown' : '纯文本';
+    mdToggle.setAttribute('aria-pressed', renderMarkdown ? 'true' : 'false');
+  }
+
+  function grow(){
+    msg.style.height = 'auto';
+    msg.style.height = Math.min(msg.scrollHeight, 132) + 'px';
   }
 
   function setStatus(on, text){
@@ -100,6 +147,7 @@ const ROOM_SCRIPT = String.raw`
     if (socket) { try { socket.close(); } catch (e) {} }
     errEl.textContent = '';
     log.textContent = '';
+    messages = [];
 
     var scheme = location.protocol === 'https:' ? 'wss://' : 'ws://';
     var url = scheme + location.host + base + '/' + encodeURIComponent(name);
@@ -111,15 +159,15 @@ const ROOM_SCRIPT = String.raw`
       setStatus(true, '已连接 ' + name);
       msg.disabled = false;
       sendBtn.disabled = false;
-      line('已加入 ' + name, 'x-chat__msg--sys');
+      line('已加入 ' + name, true);
       msg.focus();
     });
 
     socket.addEventListener('message', function(event){
       var data = null;
       try { data = JSON.parse(event.data); } catch (e) { data = { body: event.data }; }
-      if (data.type === 'error') { line(data.message, 'x-chat__msg--sys'); return; }
-      line(data.body, '');
+      if (data.type === 'error') { line(data.message, true); return; }
+      line(data.body, false);
     });
 
     socket.addEventListener('close', function(){
@@ -137,15 +185,29 @@ const ROOM_SCRIPT = String.raw`
   function send(){
     if (!socket || socket.readyState !== 1) return;
     var text = msg.value;
-    if (!text) return;
+    if (!text.trim()) return;
     socket.send(text);
     msg.value = '';
+    grow();
     msg.focus();
   }
 
   joinBtn.addEventListener('click', join);
   sendBtn.addEventListener('click', send);
-  msg.addEventListener('keydown', function(e){ if (e.key === 'Enter') send(); });
+  msg.addEventListener('input', grow);
+  msg.addEventListener('keydown', function(e){
+    // Enter sends, Shift+Enter breaks the line: the convention every chat
+    // client has already trained people on.
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
+  });
+  mdToggle.addEventListener('click', function(){
+    renderMarkdown = !renderMarkdown;
+    localStorage.setItem('xentool.room.md', renderMarkdown ? '1' : '0');
+    updateToggle();
+    restyle();
+    if (!msg.disabled) msg.focus();
+  });
+  updateToggle();
 })();
 `;
 
@@ -163,8 +225,9 @@ ${card({
       ${btn({ label: "进入房间", variant: "primary", attrs: { id: "join" } })}
       <span class="x-sep"></span>
       ${statusBadge}
+      ${btn({ label: "渲染 markdown", variant: "ghost", attrs: { id: "md-toggle", "aria-pressed": "true" } })}
     </div>
-    ${chat({})}
+    ${chat({ multiline: true })}
     <p class="error" id="error" style="margin-top:12px"></p>
   `,
 })}

@@ -274,11 +274,27 @@ export function tabs({ id = "tabs", items = [] } = {}) {
 /* ------------------------------------------------------------------- chat */
 
 /** Scrolling message log + composer. Ids are exposed so a page script can own it. */
-export function chat({ logId = "log", inputId = "msg", sendId = "send", placeholder = "说点什么…", disabled = true } = {}) {
+/*
+ * `multiline` swaps the single-line input for a textarea. The room needs it:
+ * a markdown message is often a fenced code block, and a newline is not
+ * typeable in an <input>. Enter still sends and Shift+Enter breaks the line,
+ * which is the convention every chat client has trained people on.
+ */
+export function chat({
+  logId = "log",
+  inputId = "msg",
+  sendId = "send",
+  placeholder = "说点什么…",
+  disabled = true,
+  multiline = false,
+} = {}) {
+  const field = multiline
+    ? `<textarea class="x-input x-chat__textarea"${attrs({ id: inputId, placeholder, autocomplete: "off", rows: 1, disabled })}></textarea>`
+    : `<input class="x-input"${attrs({ id: inputId, placeholder, autocomplete: "off", disabled })}>`;
   return `<div class="x-chat">
   <div class="x-chat__log"${attrs({ id: logId })}></div>
   <div class="x-chat__form">
-    <input class="x-input"${attrs({ id: inputId, placeholder, autocomplete: "off", disabled })}>
+    ${field}
     ${btn({ label: "发送", attrs: { id: sendId, disabled } })}
   </div>
 </div>`;
