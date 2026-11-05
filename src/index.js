@@ -23,6 +23,7 @@ import { renderToolsPage } from "./tools-page.js";
 import { FAVICON_SVG, FAVICON_HEADERS } from "./favicon.js";
 import { CORE_SOURCES } from "./toolkit-core-sources.js";
 import * as paste from "../tools/paste/src/index.js";
+import * as md from "../tools/md/src/index.js";
 import * as short from "../tools/short/src/index.js";
 import * as ai from "../tools/ai/src/index.js";
 import * as file from "../tools/file/src/index.js";
@@ -34,6 +35,7 @@ import * as status from "../tools/status/src/index.js";
 
 const HANDLERS = {
   paste: paste.handle,
+  md: md.handle,
   short: short.handle,
   ai: ai.handle,
   file: file.handle,

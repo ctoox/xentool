@@ -63,6 +63,17 @@ export const CATALOG = [
     tags: ["KV", "存储"],
   },
   {
+    id: "md",
+    name: "Markdown",
+    description: "写 markdown，得到一个直接显示排版效果的链接，源码随时可取。",
+    path: "/md",
+    href: "/md/",
+    host: "",
+    status: "available",
+    category: "存储",
+    tags: ["KV", "存储", "Markdown"],
+  },
+  {
     id: "short",
     name: "短链",
     description: "长链接变短，带点击统计。控制台需管理员口令。",

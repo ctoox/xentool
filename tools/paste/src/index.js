@@ -10,7 +10,28 @@
  * Storage record: { v: 1, content, createdAt, burn }. Plain strings written by
  * older versions are still readable.
  */
-import { json, text, html, health, fail, notFound, createStore } from "../../../packages/core/index.js";
+import {
+  json,
+  text,
+  html,
+  health,
+  fail,
+  notFound,
+  createStore,
+  NO_STORE,
+  MAX_BYTES,
+  MIN_TTL,
+  DEFAULT_TTL,
+  MAX_TTL,
+  ID_PATTERN,
+  TTL_OPTIONS,
+  readRecord,
+  isAdmin,
+  parseCreate,
+  saveRecord,
+  listRecords,
+  shareUrl,
+} from "../../../packages/core/index.js";
 import { escapeHtml } from "../../../packages/ui/shell.js";
 import {
   page,
@@ -24,20 +45,6 @@ import {
   emptyState,
   badge,
 } from "../../../packages/ui/components.js";
-
-const MAX_BYTES = 64 * 1024;
-const MIN_TTL = 60;
-const DEFAULT_TTL = 7 * 24 * 3600;
-const MAX_TTL = 30 * 24 * 3600;
-const ID_PATTERN = /^[a-z0-9]{6,16}$/;
-const NO_STORE = { "Cache-Control": "no-store" };
-
-const TTL_OPTIONS = [
-  { label: "1 小时", value: 3600 },
-  { label: "1 天", value: 86400 },
-  { label: "7 天", value: DEFAULT_TTL },
-  { label: "30 天", value: MAX_TTL },
-];
 
 export async function handle(request, env = {}, ctx = {}) {
   const url = new URL(request.url);
@@ -113,61 +120,22 @@ export async function handle(request, env = {}, ctx = {}) {
 }
 
 async function create(request, store, host, basePath) {
-  const raw = await request.text();
-  // Cheap guard on the wire size first; the authoritative check happens below,
-  // on the decoded content (JSON escaping can inflate the body by ~2x).
-  if (!raw || raw.length > MAX_BYTES * 2) {
-    return fail(`content must be 1-${MAX_BYTES} bytes`, raw.length > MAX_BYTES * 2 ? 413 : 400);
-  }
+  const parsed = await parseCreate(request);
+  if (!parsed.ok) return fail(parsed.message, parsed.status);
 
-  let content = raw;
-  let ttl = DEFAULT_TTL;
-  let burn = false;
-
-  if ((request.headers.get("content-type") || "").includes("application/json")) {
-    let payload;
-    try {
-      payload = JSON.parse(raw);
-    } catch {
-      return fail("invalid JSON", 400);
-    }
-    if (typeof payload?.content !== "string" || !payload.content) {
-      return fail("content must be a non-empty string", 400);
-    }
-    content = payload.content;
-    if (payload.ttl !== undefined) {
-      if (!Number.isInteger(payload.ttl) || payload.ttl < MIN_TTL || payload.ttl > MAX_TTL) {
-        return fail(`ttl must be an integer between ${MIN_TTL} and ${MAX_TTL}`, 400);
-      }
-      ttl = payload.ttl;
-    }
-    burn = payload.burn === true;
-  }
-
-  const size = new TextEncoder().encode(content).length;
-  if (!content || size > MAX_BYTES) {
-    return fail(`content must be 1-${MAX_BYTES} bytes`, size > MAX_BYTES ? 413 : 400);
-  }
-
-  const id = crypto.randomUUID().replace(/-/g, "").slice(0, 10);
-  const createdAt = Date.now();
-  await store.put(
-    id,
-    JSON.stringify({ v: 1, content, createdAt, burn }),
-    {
-      expirationTtl: ttl,
-      // The admin screen lists pastes straight from KV's key metadata, so
-      // listing never has to read (and therefore never burns) a value.
-      metadata: { createdAt, size, burn, preview: previewOf(content) },
-    },
-  );
+  const { id } = await saveRecord(store, {
+    content: parsed.content,
+    ttl: parsed.ttl,
+    burn: parsed.burn,
+    size: parsed.size,
+  });
 
   return json(
     {
       id,
-      url: `https://${host}${basePath}/${id}`,
-      expiresIn: ttl,
-      burn,
+      url: shareUrl({ host, basePath, id }),
+      expiresIn: parsed.ttl,
+      burn: parsed.burn,
       storage: store.backend,
     },
     201,
@@ -175,63 +143,8 @@ async function create(request, store, host, basePath) {
   );
 }
 
-async function peekRecord(store, id) {
-  const raw = await store.get(id);
-  if (raw === null || raw === undefined) return null;
-
-  let record = null;
-  try {
-    const parsed = JSON.parse(raw);
-    if (parsed && typeof parsed === "object" && typeof parsed.content === "string") {
-      record = parsed;
-    }
-  } catch {
-    // legacy plain-text record
-  }
-  if (!record) record = { v: 0, content: raw, createdAt: null, burn: false };
-  return record;
-}
-
-async function readRecord(store, id) {
-  const record = await peekRecord(store, id);
-  if (record && record.burn) await store.delete(id);
-  return record;
-}
-
-/* One line of context for the admin list; never the whole payload. */
-function previewOf(content) {
-  return String(content).replace(/\s+/g, " ").trim().slice(0, 60);
-}
-
-function isAdmin(request, env) {
-  const expected = env?.ADMIN;
-  if (!expected) return false;
-  const header = request.headers.get("authorization") || "";
-  if (!header.startsWith("Bearer ")) return false;
-  const token = header.slice(7).trim();
-  if (token.length !== expected.length) return false;
-  // Constant-time compare: a length-leaking early return is fine, a
-  // character-by-character early return is not.
-  let diff = 0;
-  for (let i = 0; i < token.length; i++) diff |= token.charCodeAt(i) ^ expected.charCodeAt(i);
-  return diff === 0;
-}
-
 async function listPastes(store) {
-  const entries = await store.entries({ limit: 200 });
-  const items = entries.map((entry) => {
-    const meta = entry.metadata || {};
-    return {
-      id: entry.id,
-      createdAt: meta.createdAt || null,
-      expiresAt: entry.expiresAt || null,
-      size: typeof meta.size === "number" ? meta.size : null,
-      burn: meta.burn === true,
-      preview: meta.preview || "",
-      legacy: !entry.metadata,
-    };
-  });
-  items.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+  const items = await listRecords(store, "paste");
   return json({ ok: true, count: items.length, items }, 200, NO_STORE);
 }
 
@@ -424,6 +337,22 @@ ${card({
     return esc(item.preview) + (item.preview.length >= 60 ? '…' : '');
   }
 
+  /* Markdown documents live under /md with their own keys and their own
+   * revoke endpoint, but they belong in this one list — "my shared links"
+   * is a single mental model, and two admin screens would mean one of them
+   * gets forgotten. */
+  /* Markdown lives under /md at the site root, not under this tool's
+   * basePath, so its URLs must not be built from window.__BASE. */
+  var MD_ROOT = '/md';
+  function hrefOf(item){
+    return item.kind === 'md' ? MD_ROOT + '/' + item.id : window.__BASE + '/' + item.id;
+  }
+  function kindBadge(item){
+    return item.kind === 'md'
+      ? '<span class="x-badge x-badge--accent" style="margin-right:6px">MD</span>'
+      : '';
+  }
+
   function render(items){
     if (!items.length){
       panel.innerHTML = '<p class="x-muted" style="margin-top:14px">当前没有未过期的链接。</p>';
@@ -431,25 +360,24 @@ ${card({
     }
 
     var tableRows = items.map(function(item){
-      var href = window.__BASE + '/' + item.id;
       return '<tr>' +
-        '<td><a href="' + esc(href) + '" target="_blank" rel="noopener"><b>' + esc(item.id) + '</b></a>' +
+        '<td>' + kindBadge(item) + '<a href="' + esc(hrefOf(item)) + '" target="_blank" rel="noopener"><b>' + esc(item.id) + '</b></a>' +
           (item.burn ? ' <span class="x-badge x-badge--warn">阅后即焚</span>' : '') + '</td>' +
         '<td class="paste-nowrap">' + esc(time(item.createdAt)) + '</td>' +
         '<td class="paste-nowrap">' + esc(left(item.expiresAt)) + '<br><span class="x-muted" style="font-size:12px">' + esc(time(item.expiresAt)) + '</span></td>' +
         '<td class="paste-nowrap">' + esc(size(item.size)) + '</td>' +
         '<td>' + previewOf(item) + '</td>' +
-        '<td style="text-align:right"><button type="button" class="x-btn x-btn--danger" data-revoke="' + esc(item.id) + '">失效</button></td>' +
+        '<td style="text-align:right"><button type="button" class="x-btn x-btn--danger" data-revoke="' + esc(item.id) + '" data-kind="' + esc(item.kind || 'paste') + '">失效</button></td>' +
       '</tr>';
     }).join('');
 
     var cards = items.map(function(item){
-      var href = window.__BASE + '/' + item.id;
       return '<div class="paste-item">' +
         '<div class="paste-item__top">' +
-          '<a href="' + esc(href) + '" target="_blank" rel="noopener">' + esc(item.id) + '</a>' +
+          '<a href="' + esc(hrefOf(item)) + '" target="_blank" rel="noopener">' + esc(item.id) + '</a>' +
+          kindBadge(item) +
           (item.burn ? '<span class="x-badge x-badge--warn">阅后即焚</span>' : '') +
-          '<button type="button" class="x-btn x-btn--danger paste-item__revoke" data-revoke="' + esc(item.id) + '">失效</button>' +
+          '<button type="button" class="x-btn x-btn--danger paste-item__revoke" data-revoke="' + esc(item.id) + '" data-kind="' + esc(item.kind || 'paste') + '">失效</button>' +
         '</div>' +
         '<p class="paste-item__preview">' + previewOf(item) + '</p>' +
         '<p class="paste-item__meta">剩余 ' + esc(left(item.expiresAt)) + ' · ' + esc(size(item.size)) +
@@ -465,39 +393,53 @@ ${card({
       '<p class="x-muted" style="margin-top:10px;font-size:12.5px">共 ' + items.length + ' 条。点「失效」会立即删除，不可恢复。</p>';
   }
 
+  function readJson(r){
+    return r.json().then(function(data){ return { status: r.status, data: data }; });
+  }
+
   function load(){
     var value = token.value.trim();
     error.textContent = '';
     if (!value) { error.textContent = '先填管理令牌'; return; }
     panel.innerHTML = '<p class="x-muted" style="margin-top:14px">读取中…</p>';
-    fetch(window.__BASE + '/api/admin/pastes', {
-      headers: { Authorization: 'Bearer ' + value },
-      cache: 'no-store'
-    }).then(function(r){
-      return r.json().then(function(data){ return { status: r.status, data: data }; });
-    }).then(function(res){
-      if (res.status === 401){
-        panel.innerHTML = '';
-        error.textContent = '令牌不对，或服务端没有配置 ADMIN。';
-        sessionStorage.removeItem('xentool.admin');
-        return;
+
+    var opts = { headers: { Authorization: 'Bearer ' + value }, cache: 'no-store' };
+    Promise.all([
+      fetch(window.__BASE + '/api/admin/pastes', opts).then(readJson),
+      fetch(MD_ROOT + '/api/admin/md', opts).then(readJson)
+    ]).then(function(results){
+      for (var i = 0; i < results.length; i++){
+        if (results[i].status === 401){
+          panel.innerHTML = '';
+          error.textContent = '令牌不对，或服务端没有配置 ADMIN。';
+          sessionStorage.removeItem('xentool.admin');
+          return;
+        }
       }
-      if (res.status !== 200){
-        panel.innerHTML = '';
-        error.textContent = res.data.message || res.data.error || ('读取失败（' + res.status + '）');
-        return;
+      for (var j = 0; j < results.length; j++){
+        if (results[j].status !== 200){
+          panel.innerHTML = '';
+          error.textContent = results[j].data.message || results[j].data.error || ('读取失败（' + results[j].status + '）');
+          return;
+        }
       }
+      var items = [];
+      results.forEach(function(res){ items = items.concat(res.data.items || []); });
+      items.sort(function(a, b){ return (b.createdAt || 0) - (a.createdAt || 0); });
       sessionStorage.setItem('xentool.admin', value);
-      render(res.data.items || []);
+      render(items);
     }).catch(function(e){
       panel.innerHTML = '';
       error.textContent = '网络错误：' + e.message;
     });
   }
 
-  function revoke(id){
+  function revoke(id, kind){
     if (!window.confirm('让 ' + id + ' 立刻失效？删除后无法恢复。')) return;
-    fetch(window.__BASE + '/api/admin/pastes/' + id, {
+    var url = kind === 'md'
+      ? MD_ROOT + '/api/admin/md/' + id
+      : window.__BASE + '/api/admin/pastes/' + id;
+    fetch(url, {
       method: 'DELETE',
       headers: { Authorization: 'Bearer ' + token.value.trim() }
     }).then(function(r){
@@ -508,7 +450,7 @@ ${card({
 
   panel.addEventListener('click', function(event){
     var button = event.target.closest('[data-revoke]');
-    if (button) revoke(button.getAttribute('data-revoke'));
+    if (button) revoke(button.getAttribute('data-revoke'), button.getAttribute('data-kind'));
   });
 
   unlock.addEventListener('click', load);
@@ -523,8 +465,8 @@ ${card({
 `;
 
   return page({
-    title: "Paste 管理",
-    lead: "未过期的链接都在这里，可以随时撤回。",
+    title: "链接管理",
+    lead: "未过期的 paste 和 markdown 文档都在这里，可以随时撤回。",
     body,
     style,
     script,

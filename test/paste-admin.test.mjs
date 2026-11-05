@@ -97,7 +97,7 @@ test("admin page is only served when the server has a token", async () => {
   const withToken = await handle(new Request("https://tool.xen.autos/paste/admin"), ADMIN, { ...BASE, path: "/admin" });
   assert.equal(withToken.status, 200);
   const html = await withToken.text();
-  assert.match(html, /Paste 管理/);
+  assert.match(html, /链接管理/);
   assert.doesNotMatch(html, /test-admin-token/);
 
   const withoutToken = await handle(new Request("https://tool.xen.autos/paste/admin"), {}, { ...BASE, path: "/admin" });

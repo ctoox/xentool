@@ -273,6 +273,15 @@ main.wide{max-width:1120px}
 .x-chat__form{display:flex;gap:10px;padding:12px;border-top:1px solid var(--line);background:rgba(0,0,0,.26)}
 .x-chat__form .x-input{flex:1;height:38px}
 .x-chat__form .x-btn{height:38px}
+/* Textarea variant: grows with the message instead of scrolling a 38px slot. */
+.x-chat__form .x-chat__textarea{height:auto;min-height:38px;max-height:132px;padding:9px 12px;line-height:1.55;resize:none;font-family:inherit}
+.x-chat__form .x-chat__textarea:disabled{height:38px}
+/* On a touch screen the chat row is the primary control and 38px is under the
+   40px floor the layout probe enforces; grow it to the shared --tap size. */
+@media (pointer:coarse){
+  .x-chat__form .x-input,.x-chat__form .x-btn{height:auto;min-height:var(--tap)}
+  .x-chat__form .x-chat__textarea{min-height:var(--tap);max-height:160px}
+}
 
 /* --------------------------------------------------------------- display */
 .x-display{margin:0}
@@ -387,6 +396,56 @@ main.wide{max-width:1120px}
 @media (max-width:1024px),(pointer:coarse){
   :root{--field-fs:16px;--field-fs-mono:16px}
 }
+/*
+ * Rendered markdown. One stylesheet for every surface that shows a document:
+ * the /md share page, the room chat, and the live preview on the editor. They
+ * must look identical or the "same module, three callers" claim is a lie.
+ *
+ * Chat bubbles override the scale at the bottom — a 26px heading inside a
+ * 340px-tall scrollback is unusable, so the hierarchy collapses there.
+ */
+.md{font-size:15px;line-height:1.72;color:var(--ink);overflow-wrap:break-word}
+.md>*:first-child{margin-top:0}
+.md>*:last-child{margin-bottom:0}
+.md h1,.md h2,.md h3,.md h4,.md h5,.md h6{margin:28px 0 12px;font-weight:600;line-height:1.3;letter-spacing:-.01em}
+.md h1{font-size:26px}
+.md h2{font-size:21px;padding-bottom:7px;border-bottom:1px solid var(--line)}
+.md h3{font-size:17.5px}
+.md h4{font-size:15.5px}
+.md h5,.md h6{font-size:14px;color:var(--ink-2)}
+.md p{margin:0 0 15px}
+.md a{color:var(--cyan);text-decoration:none;border-bottom:1px solid rgba(34,211,238,.35);transition:border-color .15s var(--ease)}
+.md a:hover{border-bottom-color:var(--cyan)}
+.md strong{font-weight:600;color:#fff}
+.md em{font-style:italic}
+.md del{color:var(--dim)}
+/* .md-inert marks a link whose scheme was refused: visible, unclickable. */
+.md-inert{color:var(--dim);word-break:break-all}
+.md code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.86em;background:var(--surface-2);border:1px solid var(--line);border-radius:5px;padding:.1em .36em;color:var(--ink)}
+.md pre.md-code{position:relative;margin:0 0 16px;padding:15px 16px;background:rgba(0,0,0,.42);border:1px solid var(--line);border-radius:var(--r);overflow-x:auto;line-height:1.62}
+.md pre.md-code code{background:none;border:none;padding:0;font-size:12.8px;color:#dfe3ee}
+.md pre.md-code[data-lang]::before{content:attr(data-lang);position:absolute;top:9px;right:12px;font-family:ui-monospace,monospace;font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--dim)}
+.md blockquote{margin:0 0 16px;padding:2px 0 2px 16px;border-left:2px solid var(--line-2);color:var(--ink-2)}
+.md blockquote>*:last-child{margin-bottom:0}
+.md ul,.md ol{margin:0 0 15px;padding-left:1.4em}
+.md li{margin:4px 0}
+.md li>ul,.md li>ol{margin:4px 0}
+.md li input[type=checkbox]{margin-right:6px;vertical-align:middle;accent-color:var(--cyan)}
+.md hr{height:1px;border:0;background:var(--line-2);margin:24px 0}
+/* Tables scroll on their own: a wide table must not widen the page. */
+.md-table{margin:0 0 16px;overflow-x:auto;border:1px solid var(--line);border-radius:var(--r)}
+.md table{border-collapse:collapse;width:100%;font-size:13.5px}
+.md th,.md td{padding:9px 13px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
+.md th{background:var(--surface-2);font-weight:600;font-size:12.5px;color:var(--ink-2);white-space:nowrap}
+.md tr:last-child td{border-bottom:0}
+.x-chat__msg .md{font-size:13.5px;line-height:1.62}
+.x-chat__msg .md h1,.x-chat__msg .md h2,.x-chat__msg .md h3,.x-chat__msg .md h4{font-size:14.5px;margin:12px 0 6px;padding-bottom:0;border-bottom:0}
+.x-chat__msg .md p{margin:0 0 8px}
+.x-chat__msg .md ul,.x-chat__msg .md ol{margin:0 0 8px}
+.x-chat__msg .md pre.md-code{margin:0 0 8px;padding:9px 11px}
+.x-chat__msg .md pre.md-code code{font-size:12px}
+.x-chat__msg .md blockquote{margin:0 0 8px}
+
 @media (prefers-reduced-motion:reduce){
   .x-fade{animation:none}
   .x-card,.x-btn,.x-tool-card,.x-tool-row,.x-back{transition:none}

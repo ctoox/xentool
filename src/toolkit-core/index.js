@@ -38,3 +38,4 @@ export * from "./csv.js";
 export * from "./jsonpath.js";
 export * from "./schema.js";
 export * from "./sqlfmt.js";
+export * from "./markdown.js";
