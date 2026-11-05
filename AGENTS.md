@@ -130,7 +130,7 @@ test/layout-probe.mjs      布局探测：多视口横向溢出 / 触控尺寸 /
 test/drawer-check.mjs      工作台抽屉：导航是否可见 + 焦点是否被困住
 test/portal-check.mjs      门户交互：搜索 / 分类计数 / 视图切换 / 偏好不被误改
 test/raw-template.test.mjs 语法守卫：String.raw 块里不能藏反引号
-test/contrast.test.mjs     对比度：正文色必须过 WCAG AA 4.5:1
+test/contrast.test.mjs     对比度：正文色必须过 WCAG AA 4.5:1（**仅正文**；非文本对比度见 §10 已知偏离）
 ```
 
 **分层原则**：`src/` 是门户和路由，`packages/` 是共享基础设施，`tools/` 是业务。`tools/` 只能 import `packages/`，**不能 import `src/`**（否则拆成独立 Worker 时会带着整个门户）。
@@ -683,6 +683,13 @@ const { convertCase } = await import('/core/text.js');
 | 想用 wrangler 的 Text 规则把 `.js` 当字符串导入 | 能让 Worker 拿到源码，但 Node 下同一句 import 得到的是模块命名空间，测试和线上行为不一致。用 `npm run embed` 的生成副本 |
 | 工具列在目录里但点开是「该工具暂未实现」 | 只加了 `toolkit.js` 的条目，没在 `tools-page.js` 里写 `VIEWS.<id>`。`npm test` 里有一条守卫会把缺的 id 列出来 |
 | 快速连点两个工具，页面混了两个界面 | 视图是异步的（先 `await import('/core/...')` 再建 DOM）。`render()` 用 `renderSeq` 丢弃过期的渲染，别绕过它直接往 `panelEl` 里塞节点 |
+| 控件边界看着太淡 | `--line-2` 合成后约 1.82:1，低于 WCAG 1.4.11 的 3:1。这是**有意保留的已知偏离**，不是漏修，详见下方说明 |
+
+**已知偏离：控件边界对比度（WCAG 1.4.11，AA）**
+
+输入框、按钮、下拉的 1px 描边在卡片底上只有约 **1.82:1**，低于非文本对比度要求的 3:1，本轮经决策**有意保留**。理由：这个站识别控件靠的是「填充抬起/凹陷 + 标签 + 位置 + caret」，把每个控件都描出一圈浅灰边会让整张卡片变成线框，而它只让边界更响，不改变可用性。
+
+因此**本项目不声明符合 WCAG AA**。哪天真要对外声明 AA，只有 **`.33` 一个达标值**（`.28` 实测 2.52:1，不存在"稍微提一点"的中间档），且必须全站一次性引入 `--line-ctl:rgba(255,255,255,.33)` 应用到 `.x-input / .x-select / .x-textarea / .x-btn / .x-back / .x-picker / .x-select-native`，**不得只在某个组件上单独改**——那会造成控件之间不一致。
 
 ---
 

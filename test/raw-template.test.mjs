@@ -31,7 +31,7 @@ function jsFiles(dir) {
     if (entry === "node_modules" || entry.startsWith(".")) continue;
     const path = join(dir, entry);
     if (statSync(path).isDirectory()) out.push(...jsFiles(path));
-    else if (entry.endsWith(".js")) out.push(path);
+    else if (entry.endsWith(".js") || entry.endsWith(".mjs")) out.push(path);
   }
   return out;
 }
@@ -40,6 +40,10 @@ const TARGETS = [
   ...jsFiles(join(ROOT, "packages", "ui")),
   ...jsFiles(join(ROOT, "src")),
   ...jsFiles(join(ROOT, "tools")),
+  // The probes embed whole page scripts in String.raw blocks too, and they
+  // were outside this guard: a backtick in one of their comments broke the
+  // template while this test stayed green, because .mjs was never collected.
+  ...jsFiles(join(ROOT, "test")),
 ];
 
 /** Does this file parse? Returns the parser's first complaint, or null. */
