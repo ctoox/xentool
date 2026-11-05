@@ -210,11 +210,12 @@ test("embedded sources are byte-identical to the files on disk", async () => {
 
   assert.deepEqual(Object.keys(CORE_SOURCES).sort(), files);
   for (const name of files) {
-    assert.equal(
-      CORE_SOURCES[name],
-      fs.readFileSync(path.join(dir, name), "utf8"),
-      `${name} is stale — run: npm run embed`,
-    );
+    // Same CRLF normalisation as scripts/embed-core.mjs: a Windows checkout
+    // must not look stale against a copy embedded on Linux.
+    const onDisk = fs
+      .readFileSync(path.join(dir, name), "utf8")
+      .replace(/\r\n/g, "\n");
+    assert.equal(CORE_SOURCES[name], onDisk, `${name} is stale — run: npm run embed`);
   }
 
   const hash = (await import("node:crypto"))

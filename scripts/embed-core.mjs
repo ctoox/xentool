@@ -29,7 +29,12 @@ const files = fs
   .sort();
 
 const sources = {};
-for (const name of files) sources[name] = fs.readFileSync(path.join(dir, name), "utf8");
+for (const name of files) {
+  // Normalise line endings: the freshness check compares this text against the
+  // working copy, and a Windows checkout with core.autocrlf would otherwise
+  // report a false mismatch against a Linux-built embedded copy.
+  sources[name] = fs.readFileSync(path.join(dir, name), "utf8").replace(/\r\n/g, "\n");
+}
 
 const hash = crypto
   .createHash("sha256")
