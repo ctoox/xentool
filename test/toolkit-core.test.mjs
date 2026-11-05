@@ -242,3 +242,21 @@ test("/core serves each module as importable JavaScript", async () => {
     assert.equal(missing.status, 404, `${name} should 404`);
   }
 });
+
+test("the served text is importable as a module, not just a string", async () => {
+  const { CORE_SOURCES } = await import("../src/toolkit-core-sources.js");
+
+  // Importing the exact bytes /core hands out proves the browser path works:
+  // a stray `export` in the wrong place or a truncated file would throw here
+  // while every direct-import test above still passed.
+  for (const [name, source] of Object.entries(CORE_SOURCES)) {
+    const url = `data:text/javascript;base64,${Buffer.from(source).toString("base64")}`;
+    const mod = await import(url);
+    assert.ok(Object.keys(mod).length > 0, `${name} exports nothing`);
+  }
+
+  const text = await import(
+    `data:text/javascript;base64,${Buffer.from(CORE_SOURCES["text.js"]).toString("base64")}`
+  );
+  assert.equal(text.convertCase("hello world", "camel").value, "helloWorld");
+});
