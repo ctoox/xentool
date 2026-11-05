@@ -21,6 +21,7 @@ import { CATALOG, SITE, portalTools } from "./catalog.js";
 import { renderPortal } from "./portal-page.js";
 import { renderToolsPage } from "./tools-page.js";
 import { FAVICON_SVG, FAVICON_HEADERS } from "./favicon.js";
+import { CORE_SOURCES } from "./toolkit-core-sources.js";
 import * as paste from "../tools/paste/src/index.js";
 import * as short from "../tools/short/src/index.js";
 import * as ai from "../tools/ai/src/index.js";
@@ -80,6 +81,24 @@ export async function handleRequest(request, env = {}, ctx = {}) {
       status: 302,
       headers: { Location: "/favicon.svg", "Cache-Control": "public, max-age=86400" },
     });
+  }
+
+  // Toolkit core: plain ESM, served as-is so the browser can import() one
+  // module per tool instead of downloading every tool's logic at once.
+  // `Object.hasOwn` rather than a plain lookup — "/core/constructor" would
+  // otherwise resolve through the prototype chain and "serve" a function.
+  if (url.pathname.startsWith("/core/")) {
+    const name = url.pathname.slice("/core/".length);
+    if (Object.hasOwn(CORE_SOURCES, name)) {
+      return new Response(CORE_SOURCES[name], {
+        headers: {
+          "content-type": "application/javascript; charset=utf-8",
+          "cache-control": "public, max-age=86400",
+          "x-content-type-options": "nosniff",
+        },
+      });
+    }
+    return notFound();
   }
 
   // Workbench: browser-side tools, cached briefly at the edge.

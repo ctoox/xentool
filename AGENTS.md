@@ -624,6 +624,25 @@ const res = await stub.fetch(new URL("https://do/?op=inc"));
 
 测试里给一个 `{ idFromName, get: () => ({ fetch }) }` 的假命名空间即可，不需要真 DO。
 
+### 工具函数库 `src/toolkit-core`
+
+浏览器工具的纯函数层，从 it-toolbox（MIT）移植而来，见该目录的 `LICENSE-NOTICE`。三条铁律：不碰 DOM、不引 npm 包、不用 `node:` 内置模块。`crypto` / `TextEncoder` / `atob` / `btoa` 在两边都是全局量，可以用。
+
+改完 `.js` 必须重新生成分发副本，否则线上跑的还是旧代码：
+
+```bash
+npm run embed     # 重新生成 src/toolkit-core-sources.js
+npm test          # 里有一条「嵌入副本与磁盘逐字节一致」的守卫
+```
+
+浏览器按需加载，一个工具只下载自己用到的模块：
+
+```js
+const { convertCase } = await import('/core/text.js');
+```
+
+返回约定沿用上游：可能失败的返回 `{ ok, value }` / `{ ok:false, error }`，其余直接返回值；`testRegex` 是例外，返回 `{ matches, truncated }`，错误放在 `error` 里。
+
 ---
 
 ## 10. 已知坑
@@ -649,6 +668,8 @@ const res = await stub.fetch(new URL("https://do/?op=inc"));
 | 同一个请求 JSON 正常、HTML 报 500 | 两条分支走不同的渲染函数。测试只覆盖了 JSON 分支 —— **HTML 分支也要单独测** |
 | 页面打开是空白的（抽屉/侧栏） | 克隆出来的元素继承了原元素的 `display:none`。媒体查询里要有一条显式覆盖 |
 | 改了代码但测量结果没变 | 浏览器缓存了页面。CDP 脚本要开 `Network.setCacheDisabled` |
+| 线上 `/core/*.js` 跑的是旧函数 | 改了 `src/toolkit-core/*.js` 没跑 `npm run embed`。守卫测试会失败，别绕过 |
+| 想用 wrangler 的 Text 规则把 `.js` 当字符串导入 | 能让 Worker 拿到源码，但 Node 下同一句 import 得到的是模块命名空间，测试和线上行为不一致。用 `npm run embed` 的生成副本 |
 
 ---
 
@@ -656,7 +677,7 @@ const res = await stub.fetch(new URL("https://do/?op=inc"));
 
 ```bash
 npm test               # 必须全绿，一个都不能跳
-npm run deploy:dry     # 看包体积有没有异常膨胀（当前 ~238 KiB / gzip ~62 KiB）
+npm run deploy:dry     # 看包体积有没有异常膨胀（当前 ~341 KiB / gzip ~88 KiB）
 npm run probe          # 多视口布局探测（需先起 dev server）
 npm run drawer         # 工作台抽屉：导航可见 + 焦点被困住
 npm run portal         # 门户：搜索 / 计数 / 视图切换
