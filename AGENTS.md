@@ -156,7 +156,7 @@ import { page, card, btn, field, table, badge, notice, emptyState, loginCard } f
 
 ### 3.2 目录要按 100+ 工具设计
 
-门户当前 23 个工具，目标是 100+。**渲染全部工具，不分页**（分页和搜索框互相打架：你没法搜索没渲染出来的东西），真正会先崩的是"找起来"。
+门户当前 38 个工具，目标是 100+。**渲染全部工具，不分页**（分页和搜索框互相打架：你没法搜索没渲染出来的东西），真正会先崩的是"找起来"。
 
 因此门户有四个机制，加新工具时必须沿用：
 
@@ -643,6 +643,15 @@ const { convertCase } = await import('/core/text.js');
 
 返回约定沿用上游：可能失败的返回 `{ ok, value }` / `{ ok:false, error }`，其余直接返回值；`testRegex` 是例外，返回 `{ matches, truncated }`，错误放在 `error` 里。
 
+加一个浏览器工具的完整流程，四条：
+
+1. `src/toolkit.js` 加一条 `{ id, name, desc, category }`
+2. `src/tools-page.js` 加 `VIEWS.<id> = async function (panel) { var m = await core('text.js'); ... }`
+3. `test/tools-check.mjs` 的 `EXPECT` 里补一行「首屏应出现的字符串」
+4. `npm test`（守卫会检查 id 与视图一一对应）+ `npm run tools:check`
+
+视图只做「读输入 → 调函数 → 显示结果」。逻辑写进 `toolkit-core` 并补测试，别写在视图里 —— 视图是浏览器里跑的，测试碰不到。
+
 ---
 
 ## 10. 已知坑
@@ -670,6 +679,8 @@ const { convertCase } = await import('/core/text.js');
 | 改了代码但测量结果没变 | 浏览器缓存了页面。CDP 脚本要开 `Network.setCacheDisabled` |
 | 线上 `/core/*.js` 跑的是旧函数 | 改了 `src/toolkit-core/*.js` 没跑 `npm run embed`。守卫测试会失败，别绕过 |
 | 想用 wrangler 的 Text 规则把 `.js` 当字符串导入 | 能让 Worker 拿到源码，但 Node 下同一句 import 得到的是模块命名空间，测试和线上行为不一致。用 `npm run embed` 的生成副本 |
+| 工具列在目录里但点开是「该工具暂未实现」 | 只加了 `toolkit.js` 的条目，没在 `tools-page.js` 里写 `VIEWS.<id>`。`npm test` 里有一条守卫会把缺的 id 列出来 |
+| 快速连点两个工具，页面混了两个界面 | 视图是异步的（先 `await import('/core/...')` 再建 DOM）。`render()` 用 `renderSeq` 丢弃过期的渲染，别绕过它直接往 `panelEl` 里塞节点 |
 
 ---
 
@@ -677,11 +688,12 @@ const { convertCase } = await import('/core/text.js');
 
 ```bash
 npm test               # 必须全绿，一个都不能跳
-npm run deploy:dry     # 看包体积有没有异常膨胀（当前 ~341 KiB / gzip ~88 KiB）
+npm run deploy:dry     # 看包体积有没有异常膨胀（当前 ~363 KiB / gzip ~94 KiB）
 npm run probe          # 多视口布局探测（需先起 dev server）
 npm run drawer         # 工作台抽屉：导航可见 + 焦点被困住
 npm run portal         # 门户：搜索 / 计数 / 视图切换
 npm run contrast       # 文字对比度 ≥ 4.5:1
+npm run tools:check    # 逐个打开工作台的每个工具，看渲染与控制台
 ```
 
 再加人工确认：

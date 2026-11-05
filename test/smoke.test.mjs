@@ -46,7 +46,7 @@ test("portal renders a complete standalone page", async () => {
   assert.match(html, /rel="icon"/);
   assert.match(html, /theme-color/);
   assert.doesNotMatch(html, /<script src=/);
-  assert.equal(body.tools.length, 23);
+  assert.equal(body.tools.length, 38);
   assert.equal(body.tools.filter((t) => t.status === "planned").length, 1);
 });
 
@@ -838,4 +838,23 @@ test("workbench exposes the new browser-side tools", async () => {
   assert.match(page, /Markdown 预览/);
   // the embedded client script must stay free of template-literal syntax
   assert.doesNotMatch(page, /<script src=/);
+});
+
+test("every listed browser tool is actually implemented", async () => {
+  const { TOOLKIT } = await import("../src/toolkit.js");
+  const { CORE_SOURCES } = await import("../src/toolkit-core-sources.js");
+  const html = await (await call("/tools")).text();
+
+  // A tool that is in the catalog but has no view renders "该工具暂未实现" —
+  // the same dead end the planned entries used to create. Catch it here
+  // instead of in a browser.
+  const implemented = new Set([...html.matchAll(/VIEWS\.([a-zA-Z0-9]+)\s*=/g)].map((m) => m[1]));
+  const missing = TOOLKIT.filter((tool) => !implemented.has(tool.id)).map((tool) => tool.id);
+  assert.deepEqual(missing, [], `tools without a view: ${missing.join(", ")}`);
+
+  // Views import their logic from /core/<name>; a typo there would only show
+  // up as a failed import in the browser.
+  const requested = new Set([...html.matchAll(/core\('([a-z-]+\.js)'\)/g)].map((m) => m[1]));
+  const unknown = [...requested].filter((name) => !Object.hasOwn(CORE_SOURCES, name));
+  assert.deepEqual(unknown, [], `views ask for unknown core modules: ${unknown.join(", ")}`);
 });

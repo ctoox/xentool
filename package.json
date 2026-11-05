@@ -11,6 +11,7 @@
     "probe": "node test/layout-probe.mjs",
     "drawer": "node test/drawer-check.mjs",
     "portal": "node test/portal-check.mjs",
+    "tools:check": "node test/tools-check.mjs",
     "contrast": "node test/contrast-check.mjs",
     "dev": "npx wrangler dev",
     "deploy": "npx wrangler deploy",

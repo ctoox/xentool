@@ -99,6 +99,58 @@ const CLIENT_JS = String.raw`
 
   var VIEWS = {};
 
+  /*
+   * Toolkit core, loaded on demand from /core/<name>.js.
+   *
+   * One shared promise per module, so switching between two tools that need
+   * the same file costs one request total. Nothing is preloaded: a tool that
+   * only needs text.js should not pay for the AES or color code.
+   */
+  var coreCache = {};
+  function core(name) {
+    if (!coreCache[name]) coreCache[name] = import('/core/' + name);
+    return coreCache[name];
+  }
+
+  /* A definition table for anything shaped like "field: value". */
+  function kv(rows) {
+    var table = h('table', { class: 'kv' });
+    for (var i = 0; i < rows.length; i++) {
+      if (!rows[i]) continue;
+      table.appendChild(h('tr', {},
+        h('th', { text: rows[i][0] }),
+        h('td', { text: rows[i][1] === '' || rows[i][1] == null ? '—' : String(rows[i][1]) })
+      ));
+    }
+    return table;
+  }
+
+  /* Same table, with a header row — for search results and reference lists. */
+  function datatable(columns, rows) {
+    var table = h('table', { class: 'kv kv-data' });
+    var head = h('tr', {});
+    for (var i = 0; i < columns.length; i++) head.appendChild(h('th', { text: columns[i] }));
+    table.appendChild(head);
+    for (var r = 0; r < rows.length; r++) {
+      var tr = h('tr', {});
+      for (var c = 0; c < rows[r].length; c++) tr.appendChild(h('td', { text: rows[r][c] }));
+      table.appendChild(tr);
+    }
+    return table;
+  }
+
+  /* A native select, styled like the text inputs. */
+  function picker(options, value, onChange) {
+    var sel = h('select', { class: 'input short' });
+    for (var i = 0; i < options.length; i++) {
+      sel.appendChild(h('option', { value: options[i][0], text: options[i][1] }));
+    }
+    sel.value = value;
+    if (onChange) sel.addEventListener('change', function () { onChange(sel.value); });
+    return sel;
+  }
+
+
   VIEWS.url = function (panel) {
     var input = area('输入 URL 或文本…');
     var result = out('');
@@ -698,7 +750,418 @@ const CLIENT_JS = String.raw`
     status.textContent = input.value.length + ' 字符 · ' + input.value.split(/\n/).length + ' 行';
   };
 
+  // ---- toolkit ports ------------------------------------------------------
+  //
+  // Each of these is a thin UI over src/toolkit-core. The heavy lifting lives
+  // in the module, which is also what the tests exercise — keep the view dumb:
+  // read the input, call one function, show the result.
+
+  VIEWS.case = async function (panel) {
+    var t = await core('text.js');
+    var input = area('hello world、helloWorld、hello-world…');
+    input.value = 'hello world';
+    var table = h('table', { class: 'kv' });
+    var styles = [
+      ['camel', 'camelCase'], ['pascal', 'PascalCase'], ['snake', 'snake_case'],
+      ['kebab', 'kebab-case'], ['constant', 'CONSTANT_CASE'], ['title', 'Title Case'],
+      ['sentence', 'Sentence case'], ['upper', 'UPPERCASE'], ['lower', 'lowercase']
+    ];
+    var values = {};
+
+    function run() {
+      table.replaceChildren();
+      for (var i = 0; i < styles.length; i++) {
+        var r = t.convertCase(input.value, styles[i][0]);
+        values[styles[i][1]] = r.ok ? r.value : '';
+        table.appendChild(h('tr', {},
+          h('th', { text: styles[i][1] }),
+          h('td', { text: r.ok ? r.value : '—' })
+        ));
+      }
+    }
+    function all() {
+      var lines = [];
+      for (var i = 0; i < styles.length; i++) lines.push(styles[i][1] + ': ' + values[styles[i][1]]);
+      return lines.join('\n');
+    }
+
+    input.addEventListener('input', run);
+    panel.appendChild(block('输入', input));
+    panel.appendChild(block('结果', table));
+    panel.appendChild(row(copyBtn(all)));
+    run();
+  };
+
+  VIEWS.counter = async function (panel) {
+    var t = await core('text.js');
+    var input = area('把文本放进来，边打边算…');
+    input.value = '把一段文字放进来，这里会实时统计。\n第二行也算。';
+    var table = h('table', { class: 'kv' });
+
+    function run() {
+      var s = t.countText(input.value);
+      var rows = [
+        ['字符数', s.characters],
+        ['不含空白', s.charactersNoSpaces],
+        ['词数', s.words],
+        ['行数', s.lines],
+        ['段落数', s.paragraphs],
+        ['句数', s.sentences],
+        ['字节数 UTF-8', s.bytes],
+        ['阅读时长', s.readingTime],
+        ['朗读时长', s.speakingTime]
+      ];
+      table.replaceChildren();
+      for (var i = 0; i < rows.length; i++) {
+        table.appendChild(h('tr', {}, h('th', { text: rows[i][0] }), h('td', { text: String(rows[i][1]) })));
+      }
+    }
+
+    input.addEventListener('input', run);
+    panel.appendChild(block('文本', input));
+    panel.appendChild(block('统计', table));
+    run();
+  };
+
+  VIEWS.lines = async function (panel) {
+    var t = await core('text.js');
+    var input = area('每行一条…');
+    input.value = 'banana\napple\nbanana\n\ncherry';
+    var status = h('div', { class: 'muted', text: '按顺序点，效果会叠加。' });
+    var ops = [
+      ['去重', 'dedupe-lines'],
+      ['升序', 'sort-lines'],
+      ['降序', 'sort-lines-desc'],
+      ['去空行', 'remove-empty-lines'],
+      ['去首尾空格', 'trim-lines'],
+      ['加行号', 'number-lines'],
+      ['打乱', 'shuffle-lines'],
+      ['反转', 'reverse']
+    ];
+
+    function apply(op) {
+      var r = t.transformText(input.value, [op]);
+      if (!r.ok) { status.textContent = r.error; return; }
+      input.value = r.value;
+      status.textContent = op + ' → ' + input.value.split('\n').length + ' 行';
+    }
+
+    var bar = h('div', { class: 'row' });
+    for (var i = 0; i < ops.length; i++) {
+      bar.appendChild((function (pair) {
+        return btn(pair[0], function () { apply(pair[1]); });
+      })(ops[i]));
+    }
+
+    panel.appendChild(block('文本', input));
+    panel.appendChild(block('操作', bar));
+    panel.appendChild(row(
+      copyBtn(function () { return input.value; }),
+      btn('清空', function () { input.value = ''; status.textContent = ''; }, true)
+    ));
+    panel.appendChild(status);
+  };
+
+  VIEWS.hex = async function (panel) {
+    var e = await core('encoding.js');
+    var input = area('文本或十六进制，例如 48 69');
+    input.value = 'xentool';
+    var sep = line('分隔符，留空表示不加', ' ');
+    var result = out('');
+
+    function run(mode) {
+      var r = mode === 'encode' ? e.encodeHex(input.value, sep.value) : e.decodeHex(input.value);
+      result.textContent = r.ok ? r.value : (mode === 'encode' ? '编码失败：' : '解码失败：') + r.error;
+    }
+
+    panel.appendChild(block('输入', input));
+    panel.appendChild(row(sep));
+    panel.appendChild(row(btn('编码', function () { run('encode'); }, true), btn('解码', function () { run('decode'); }), copyBtn(function () { return result.textContent; })));
+    panel.appendChild(block('结果', result));
+    run('encode');
+  };
+
+  VIEWS.unicode = async function (panel) {
+    var e = await core('encoding.js');
+    var input = area('字符，或 \\u4e2d 这样的码点');
+    input.value = 'xentool 边缘';
+    var table = h('table', { class: 'kv' });
+    var result = out('');
+
+    function run() {
+      var r = e.textToUnicode(input.value);
+      table.replaceChildren();
+      if (!r.ok) { result.textContent = r.error; return; }
+      table.appendChild(datatable(['字符', '码点', '名称'], r.value.codePoints.map(function (cp) {
+        return [cp.char, cp.code, cp.name || '—'];
+      })));
+      result.textContent = '';
+    }
+
+    function decode() {
+      var r = e.unicodeToText(input.value);
+      result.textContent = r.ok ? r.value : '解码失败：' + r.error;
+    }
+
+    input.addEventListener('input', run);
+    panel.appendChild(block('输入', input));
+    panel.appendChild(row(btn('解码为文本', decode, true), copyBtn(function () { return result.textContent; })));
+    panel.appendChild(block('码点', table));
+    panel.appendChild(block('解码结果', result));
+    run();
+  };
+
+  VIEWS.htmlent = async function (panel) {
+    var e = await core('encoding.js');
+    var input = area('<a href="x">链接</a> 或 &lt;a&gt;');
+    input.value = '<a href="x">链接</a>';
+    var result = out('');
+
+    function run(mode) {
+      var r = mode === 'encode' ? e.encodeHtmlEntities(input.value) : e.decodeHtmlEntities(input.value);
+      result.textContent = r.ok ? r.value : r.error;
+    }
+
+    panel.appendChild(block('输入', input));
+    panel.appendChild(row(btn('编码', function () { run('encode'); }, true), btn('解码', function () { run('decode'); }), copyBtn(function () { return result.textContent; })));
+    panel.appendChild(block('结果', result));
+    run('encode');
+  };
+
+  VIEWS.morse = async function (panel) {
+    var e = await core('encoding.js');
+    var input = area('SOS 或 ... --- ...');
+    input.value = 'SOS';
+    var result = out('');
+
+    function run(mode) {
+      var r = mode === 'encode' ? e.textToMorse(input.value) : e.morseToText(input.value);
+      result.textContent = r.ok ? r.value : r.error;
+    }
+
+    panel.appendChild(block('输入', input));
+    panel.appendChild(row(btn('编码', function () { run('encode'); }, true), btn('解码', function () { run('decode'); }), copyBtn(function () { return result.textContent; })));
+    panel.appendChild(block('结果', result));
+    run('encode');
+  };
+
+  VIEWS.caesar = async function (panel) {
+    var e = await core('encoding.js');
+    var input = area('Hello, World');
+    input.value = 'Hello, World';
+    var shift = line('位移', '13', 'number');
+    var result = out('');
+
+    function run(mode) {
+      var n = parseInt(shift.value, 10);
+      if (isNaN(n)) { result.textContent = '位移要是数字'; return; }
+      var delta = mode === 'encode' ? n : -n;
+      var r = n === 13 ? e.rot13(input.value) : e.caesarCipher(input.value, delta);
+      result.textContent = r.ok ? r.value : r.error;
+    }
+
+    panel.appendChild(block('输入', input));
+    panel.appendChild(row(shift));
+    panel.appendChild(row(btn('加密', function () { run('encode'); }, true), btn('解密', function () { run('decode'); }), copyBtn(function () { return result.textContent; })));
+    panel.appendChild(block('结果', result));
+    run('encode');
+  };
+
+  VIEWS.escape = async function (panel) {
+    var t = await core('text.js');
+    var input = area('含引号、换行、反斜杠的字符串…');
+    input.value = 'he said "hi"\\n\\ttab';
+    var lang = 'javascript';
+    var result = out('');
+
+    function run(mode) {
+      var r = mode === 'escape' ? t.escapeString(input.value, lang) : t.unescapeString(input.value);
+      result.textContent = r.ok ? r.value : r.error;
+    }
+
+    panel.appendChild(block('输入', input));
+    panel.appendChild(row(picker([
+      ['javascript', 'JavaScript'], ['python', 'Python'], ['java', 'Java'], ['c', 'C / C++']
+    ], lang, function (v) { lang = v; run('escape'); })));
+    panel.appendChild(row(btn('转义', function () { run('escape'); }, true), btn('反转义', function () { run('unescape'); }), copyBtn(function () { return result.textContent; })));
+    panel.appendChild(block('结果', result));
+    run('escape');
+  };
+
+  VIEWS.curl = async function (panel) {
+    var n = await core('network.js');
+    var input = area("curl -X POST https://api.example.com/v1/items -H 'content-type: application/json' -d '{\"a\":1}'");
+    input.value = "curl -X POST https://api.example.com/v1/items -H 'content-type: application/json' -d '{\"a\":1}'";
+    var target = 'fetch';
+    var result = out('');
+
+    function run() {
+      var r = n.convertCurl(input.value);
+      result.textContent = r.ok ? r.value[target] : '解析失败：' + r.error;
+    }
+
+    panel.appendChild(block('curl 命令', input));
+    panel.appendChild(row(picker([
+      ['fetch', 'fetch'], ['axios', 'axios'], ['python', 'Python requests'], ['go', 'Go'], ['php', 'PHP']
+    ], target, function (v) { target = v; run(); })));
+    panel.appendChild(row(btn('转换', run, true), copyBtn(function () { return result.textContent; })));
+    panel.appendChild(block('结果', result));
+    run();
+  };
+
+  VIEWS.roman = async function (panel) {
+    var n = await core('number.js');
+    var input = line('1994 或 MCMXCIV', '1994');
+    var result = out('');
+    var hint = h('div', { class: 'muted', text: '输入数字自动转罗马，输入字母自动转数字。' });
+
+    function run() {
+      var value = input.value.trim();
+      if (!value) { result.textContent = ''; return; }
+      var r = /^[0-9]+$/.test(value) ? n.toRoman(parseInt(value, 10)) : n.fromRoman(value.toUpperCase());
+      result.textContent = r.ok ? String(r.value) : r.error;
+    }
+
+    input.addEventListener('input', run);
+    panel.appendChild(block('输入', input));
+    panel.appendChild(row(btn('转换', run, true), copyBtn(function () { return result.textContent; })));
+    panel.appendChild(block('结果', result));
+    panel.appendChild(hint);
+    run();
+  };
+
+  VIEWS.base = async function (panel) {
+    var n = await core('number.js');
+    var input = line('要转换的整数', '255');
+    var from = '10';
+    var to = '16';
+    var result = out('');
+    var table = h('table', { class: 'kv' });
+
+    function run() {
+      var r = n.convertBase(input.value.trim(), parseInt(from, 10), parseInt(to, 10));
+      result.textContent = r.ok ? r.value : r.error;
+      table.replaceChildren();
+      var bases = [2, 8, 10, 16, 36];
+      for (var i = 0; i < bases.length; i++) {
+        var one = n.convertBase(input.value.trim(), parseInt(from, 10), bases[i]);
+        table.appendChild(h('tr', {}, h('th', { text: bases[i] + ' 进制' }), h('td', { text: one.ok ? one.value : '—' })));
+      }
+    }
+
+    input.addEventListener('input', run);
+    panel.appendChild(block('输入', input));
+    panel.appendChild(row(
+      h('span', { class: 'muted', text: '从' }), picker([['2', '2'], ['8', '8'], ['10', '10'], ['16', '16'], ['36', '36']], from, function (v) { from = v; run(); }),
+      h('span', { class: 'muted', text: '转' }), picker([['2', '2'], ['8', '8'], ['10', '10'], ['16', '16'], ['36', '36']], to, function (v) { to = v; run(); })
+    ));
+    panel.appendChild(row(btn('转换', run, true), copyBtn(function () { return result.textContent; })));
+    panel.appendChild(block('结果', result));
+    panel.appendChild(block('常用进制', table));
+    run();
+  };
+
+  VIEWS.urlparse = async function (panel) {
+    var n = await core('network.js');
+    var input = line('粘贴完整 URL', 'https://user:pw@example.com:8443/a/b?q=1&r=2#top');
+    var table = h('table', { class: 'kv' });
+    var params = h('table', { class: 'kv' });
+
+    function run() {
+      var r = n.parseUrl(input.value.trim());
+      table.replaceChildren();
+      params.replaceChildren();
+      if (!r.ok) {
+        table.appendChild(h('tr', {}, h('td', { text: r.error })));
+        return;
+      }
+      var v = r.value;
+      var rows = [
+        ['协议', v.protocol], ['主机', v.host], ['主机名', v.hostname],
+        ['端口', v.port], ['路径', v.pathname], ['查询', v.search],
+        ['锚点', v.hash], ['用户名', v.username], ['密码', v.password ? '（已隐藏）' : '']
+      ];
+      for (var i = 0; i < rows.length; i++) {
+        table.appendChild(h('tr', {}, h('th', { text: rows[i][0] }), h('td', { text: rows[i][1] == null || rows[i][1] === '' ? '—' : String(rows[i][1]) })));
+      }
+      var keys = Object.keys(v.params || {});
+      if (keys.length) {
+        params.appendChild(h('tr', {}, h('th', { text: '参数' }), h('th', { text: '值' })));
+        for (var k = 0; k < keys.length; k++) {
+          params.appendChild(h('tr', {}, h('td', { text: keys[k] }), h('td', { text: String(v.params[keys[k]]) })));
+        }
+      }
+    }
+
+    input.addEventListener('input', run);
+    panel.appendChild(block('URL', input));
+    panel.appendChild(block('拆解', table));
+    panel.appendChild(block('查询参数', params));
+    run();
+  };
+
+  VIEWS.httpcode = async function (panel) {
+    var n = await core('network.js');
+    var input = line('输入 404 或 not found', '');
+    var table = h('table', { class: 'kv' });
+    var hint = h('div', { class: 'muted', text: '留空显示常用状态码，输入数字或关键字过滤。' });
+
+    function run() {
+      var query = input.value.trim();
+      var rows = n.searchHttpStatus(query);
+      // An empty query lists codes from 100 upwards, which buries the ones
+      // people actually look up. Show the common set first instead.
+      if (!query) {
+        var common = [200, 201, 204, 301, 302, 304, 400, 401, 403, 404, 405, 409, 422, 429, 500, 502, 503, 504];
+        rows = common.map(function (code) {
+          for (var i = 0; i < rows.length; i++) if (rows[i].code === code) return rows[i];
+          return null;
+        }).filter(Boolean);
+      }
+      table.replaceChildren();
+      if (!rows || !rows.length) {
+        table.appendChild(h('tr', {}, h('td', { text: '没有匹配的状态码' })));
+        return;
+      }
+      table.appendChild(datatable(['码', '含义', '说明'], rows.slice(0, 20).map(function (r) {
+        return [r.code, r.message, r.description];
+      })));
+    }
+
+    input.addEventListener('input', run);
+    panel.appendChild(block('查询', input));
+    panel.appendChild(block('结果', table));
+    panel.appendChild(hint);
+    run();
+  };
+
+  VIEWS.mime = async function (panel) {
+    var n = await core('network.js');
+    var input = line('输入 .json 或 image', '');
+    var table = h('table', { class: 'kv' });
+    var hint = h('div', { class: 'muted', text: '按扩展名或 MIME 关键字过滤。' });
+
+    function run() {
+      var rows = n.searchMimeTypes(input.value.trim());
+      table.replaceChildren();
+      if (!rows || !rows.length) {
+        table.appendChild(h('tr', {}, h('td', { text: '没有匹配的 MIME 类型' })));
+        return;
+      }
+      table.appendChild(datatable(['扩展名', 'Content-Type', '说明'], rows.slice(0, 20).map(function (r) {
+        return [r.extension, r.mimeType, r.description];
+      })));
+    }
+
+    input.addEventListener('input', run);
+    panel.appendChild(block('查询', input));
+    panel.appendChild(block('结果', table));
+    panel.appendChild(hint);
+    run();
+  };
+
   var cleanup = null;
+  var renderSeq = 0;
 
   function render(id) {
     if (cleanup) { cleanup(); cleanup = null; }
@@ -708,13 +1171,37 @@ const CLIENT_JS = String.raw`
     titleEl.textContent = tool.name;
     descEl.textContent = tool.desc;
     document.title = tool.name + ' · xentool';
-    panelEl.innerHTML = '';
+
+    /*
+     * Views may be async: the ones backed by /core/*.js await an import before
+     * they can build anything. Building into a detached node and swapping it
+     * in at the end keeps a slow module from painting into a panel the user
+     * has already navigated away from — a fast click on two tools in a row
+     * would otherwise mix both UIs together.
+     */
+    var seq = ++renderSeq;
+    var panel = document.createElement('div');
+    panelEl.replaceChildren();
     var view = VIEWS[tool.id];
-    if (view) {
-      var c = view(panelEl);
-      if (typeof c === 'function') cleanup = c;
+
+    var show = function (meta) {
+      if (seq !== renderSeq) {
+        if (typeof meta === 'function') meta();
+        return;
+      }
+      panelEl.replaceChildren(panel);
+      if (typeof meta === 'function') cleanup = meta;
+    };
+
+    if (!view) {
+      panel.appendChild(h('p', { class: 'muted', text: '该工具暂未实现。' }));
+      show(null);
     } else {
-      panelEl.appendChild(h('p', { class: 'muted', text: '该工具暂未实现。' }));
+      Promise.resolve(view(panel)).then(show).catch(function (err) {
+        if (seq !== renderSeq) return;
+        panel.replaceChildren(h('p', { class: 'error', text: '模块加载失败：' + err.message }));
+        show(null);
+      });
     }
 
     // Keep both the desktop sidebar and the mobile drawer in sync: the drawer
@@ -894,6 +1381,13 @@ h1{margin:0;font-size:23px;font-weight:600;letter-spacing:-.02em}
 .btn.primary{background:linear-gradient(135deg,#22d3ee,#a78bfa);border-color:transparent;color:#05070b;font-weight:650;box-shadow:0 6px 18px -10px rgba(34,211,238,.85)}
 .btn.primary:hover{filter:brightness(1.07)}
 .out{background:rgba(0,0,0,.35);border:1px solid var(--line);border-radius:10px;padding:13px;font:12.5px/1.65 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:#cfd3dc;white-space:pre-wrap;word-break:break-all;min-height:44px;margin:0;max-height:340px;overflow:auto}
+.kv{width:100%;border-collapse:collapse;font-size:13px;border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.kv th,.kv td{padding:8px 12px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
+.kv tr:last-child th,.kv tr:last-child td{border-bottom:0}
+.kv th{color:var(--dim);font-weight:500;white-space:nowrap;width:1%;background:rgba(255,255,255,.02)}
+.kv td{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;word-break:break-all}
+.kv-data tr:first-child th{background:rgba(255,255,255,.04);color:var(--ink-2);font-weight:600}
+.error{color:#fca5a5;font-size:13px;margin:8px 0 0}
 .swatch{width:38px;height:38px;border-radius:9px;border:1px solid var(--line);background:#22d3ee;flex:none}
 .md-split{display:grid;grid-template-columns:1fr 1fr;gap:14px}
 .md-split textarea{min-height:300px}
