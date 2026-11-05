@@ -1160,6 +1160,327 @@ const CLIENT_JS = String.raw`
     run();
   };
 
+  /* ---------------------------------------------------------------- */
+  /* Data formats                                                      */
+  /* ---------------------------------------------------------------- */
+
+  VIEWS.yaml = async function (panel) {
+    var yaml = await core('yaml.js');
+    var input = area('粘贴 YAML 或 JSON…');
+    input.value = [
+      '# 一份典型的配置文件',
+      'name: xentool',
+      'version: 2',
+      'tags: [edge, tools]',
+      'server:',
+      '  host: 0.0.0.0',
+      '  ports:',
+      '    - 80',
+      '    - 443',
+      'script: |',
+      '  echo hello',
+      '  echo world'
+    ].join('\n');
+
+    var dir = picker([['y2j', 'YAML → JSON'], ['j2y', 'JSON → YAML']], 'y2j', run);
+    var result = out('');
+    var status = h('div', { class: 'muted' });
+
+    function run() {
+      var r = dir.value === 'y2j' ? yaml.yamlToJson(input.value) : yaml.jsonToYaml(input.value);
+      result.textContent = r.ok ? r.value : r.error;
+      status.textContent = r.ok
+        ? (dir.value === 'y2j' ? '已解析为 JSON，多文档会输出为数组。' : '已生成 YAML，字符串需要时自动加引号。')
+        : '转换失败，原因见结果区。';
+    }
+
+    input.addEventListener('input', run);
+    panel.appendChild(block('输入', input));
+    panel.appendChild(row(dir, copyBtn(function () { return result.textContent; })));
+    panel.appendChild(block('结果', result));
+    panel.appendChild(status);
+    run();
+  };
+
+  VIEWS.toml = async function (panel) {
+    var toml = await core('toml.js');
+    var input = area('粘贴 TOML…');
+    input.value = [
+      '# 配置示例',
+      'title = "xentool"',
+      'enabled = true',
+      '',
+      '[server]',
+      'host = "127.0.0.1"',
+      'ports = [ 8000, 8001 ]',
+      '',
+      '[[products]]',
+      'name = "Hammer"',
+      'sku = 738594937'
+    ].join('\n');
+    var result = out('');
+    var status = h('div', { class: 'muted' });
+
+    function run() {
+      var r = toml.tomlToJson(input.value);
+      result.textContent = r.ok ? r.value : r.error;
+      status.textContent = r.ok ? '日期与时间保持原样，JSON 没有日期类型。' : '解析失败，原因见结果区。';
+    }
+
+    input.addEventListener('input', run);
+    panel.appendChild(block('输入', input));
+    panel.appendChild(row(copyBtn(function () { return result.textContent; })));
+    panel.appendChild(block('结果', result));
+    panel.appendChild(status);
+    run();
+  };
+
+  VIEWS.csv = async function (panel) {
+    var csv = await core('csv.js');
+    var input = area('粘贴 CSV 或 JSON 数组…');
+    input.value = [
+      'name,role,note',
+      '"Ada, L",admin,"say ""hi"""',
+      'Bob,dev,hello'
+    ].join('\n');
+
+    var dir = picker([['c2j', 'CSV → JSON'], ['j2c', 'JSON → CSV']], 'c2j', run);
+    var delimiter = picker(csv.DELIMITERS, 'auto', run);
+    var result = out('');
+    var status = h('div', { class: 'muted' });
+
+    function run() {
+      if (dir.value === 'c2j') {
+        var parsed = csv.csvToJson(input.value, { delimiter: delimiter.value });
+        if (!parsed.ok) {
+          result.textContent = parsed.error;
+          status.textContent = '解析失败，原因见结果区。';
+          return;
+        }
+        result.textContent = JSON.stringify(parsed.value, null, 2);
+        var mark = parsed.delimiter === '\t' ? 'Tab' : parsed.delimiter;
+        status.textContent = '分隔符「' + mark + '」，' + parsed.value.length + ' 行数据，' + parsed.columns.length + ' 列。值保持字符串，不会把 007 变成 7。';
+        return;
+      }
+
+      var rows;
+      try {
+        rows = JSON.parse(input.value);
+      } catch (err) {
+        result.textContent = 'JSON 解析失败：' + err.message;
+        status.textContent = '先用 JSON 数组作为输入。';
+        return;
+      }
+      var built = csv.jsonToCsv(rows, { delimiter: delimiter.value });
+      if (!built.ok) {
+        result.textContent = built.error;
+        status.textContent = '生成失败，原因见结果区。';
+        return;
+      }
+      result.textContent = built.value;
+      status.textContent = '已按首个对象出现的键顺序排列列，含分隔符或换行的字段自动加引号。';
+    }
+
+    input.addEventListener('input', run);
+    panel.appendChild(block('输入', input));
+    panel.appendChild(row(dir, delimiter, copyBtn(function () { return result.textContent; })));
+    panel.appendChild(block('结果', result));
+    panel.appendChild(status);
+    run();
+  };
+
+  VIEWS.jsonpath = async function (panel) {
+    var jp = await core('jsonpath.js');
+    var input = area('粘贴 JSON…');
+    input.value = JSON.stringify({
+      store: {
+        book: [
+          { title: 'A', author: 'X', price: 8.95 },
+          { title: 'B', author: 'Y', price: 12.99 },
+          { title: 'C', author: 'Z', price: 22.99 }
+        ],
+        bicycle: { color: 'red', price: 19.95 }
+      }
+    }, null, 2);
+
+    var pathInput = line('JSONPath，例如 $.store.book[?(@.price < 10)]', '$.store.book[*].author');
+    var table = h('table', { class: 'kv kv-data' });
+    var status = h('div', { class: 'muted' });
+
+    function run() {
+      table.replaceChildren();
+      var doc;
+      try {
+        doc = JSON.parse(input.value);
+      } catch (err) {
+        status.textContent = 'JSON 解析失败：' + err.message;
+        return;
+      }
+      var r = jp.queryJsonPath(doc, pathInput.value);
+      if (!r.ok) {
+        table.appendChild(h('tr', {}, h('td', { text: r.error })));
+        status.textContent = '表达式有误。';
+        return;
+      }
+      if (!r.value.count) {
+        table.appendChild(h('tr', {}, h('td', { text: '没有匹配的结果' })));
+        status.textContent = '路径本身没问题，只是当前文档里没有命中。';
+        return;
+      }
+      var head = h('tr', {}, h('th', { text: '路径' }), h('th', { text: '值' }));
+      table.appendChild(head);
+      var limit = Math.min(r.value.count, 50);
+      for (var i = 0; i < limit; i++) {
+        var item = r.value.matches[i];
+        var shown = typeof item.value === 'string' ? item.value : JSON.stringify(item.value);
+        table.appendChild(h('tr', {},
+          h('td', { text: item.path }),
+          h('td', { text: shown })
+        ));
+      }
+      status.textContent = r.value.count > limit
+        ? '命中 ' + r.value.count + ' 条，先显示前 ' + limit + ' 条。'
+        : '命中 ' + r.value.count + ' 条。';
+    }
+
+    var examples = h('div', { class: 'row' });
+    for (var e = 0; e < jp.JSONPATH_EXAMPLES.length; e++) {
+      (function (example) {
+        examples.appendChild(btn(example.note, function () {
+          pathInput.value = example.path;
+          run();
+        }));
+      })(jp.JSONPATH_EXAMPLES[e]);
+    }
+
+    input.addEventListener('input', run);
+    pathInput.addEventListener('input', run);
+    panel.appendChild(block('文档', input));
+    panel.appendChild(block('查询', pathInput));
+    panel.appendChild(examples);
+    panel.appendChild(block('结果', table));
+    panel.appendChild(status);
+    run();
+  };
+
+  VIEWS.j2ts = async function (panel) {
+    var schema = await core('schema.js');
+    var input = area('粘贴 JSON 样例…');
+    input.value = JSON.stringify({
+      id: 1,
+      name: 'Ada',
+      active: true,
+      tags: ['a', 'b'],
+      address: { city: 'X', zip: '100000' },
+      orders: [{ sku: 'A1', qty: 2 }, { sku: 'B2', qty: 1 }]
+    }, null, 2);
+    var nameInput = line('根类型名', 'Root');
+    var result = out('');
+    var status = h('div', { class: 'muted' });
+
+    function run() {
+      var doc;
+      try {
+        doc = JSON.parse(input.value);
+      } catch (err) {
+        result.textContent = 'JSON 解析失败：' + err.message;
+        status.textContent = '需要合法的 JSON 才能推断类型。';
+        return;
+      }
+      var r = schema.jsonToTypeScript(doc, nameInput.value.trim() || 'Root');
+      result.textContent = r.ok ? r.value : r.error;
+      status.textContent = r.ok ? '数组里部分元素缺失的字段会标成可选（?）。' : '生成失败，原因见结果区。';
+    }
+
+    input.addEventListener('input', run);
+    nameInput.addEventListener('input', run);
+    panel.appendChild(block('样例', input));
+    panel.appendChild(row(nameInput, copyBtn(function () { return result.textContent; })));
+    panel.appendChild(block('TypeScript', result));
+    panel.appendChild(status);
+    run();
+  };
+
+  VIEWS.jsonschema = async function (panel) {
+    var schema = await core('schema.js');
+    var input = area('粘贴 JSON 样例…');
+    input.value = JSON.stringify({
+      id: 1,
+      name: 'Ada',
+      tags: ['a'],
+      address: { city: 'X' }
+    }, null, 2);
+    var titleInput = line('标题', 'Root');
+    var draft = picker([['2020-12', 'draft 2020-12'], ['07', 'draft-07']], '2020-12', run);
+    var result = out('');
+
+    function run() {
+      var doc;
+      try {
+        doc = JSON.parse(input.value);
+      } catch (err) {
+        result.textContent = 'JSON 解析失败：' + err.message;
+        return;
+      }
+      var r = schema.jsonToJsonSchema(doc, titleInput.value.trim() || 'Root', draft.value);
+      result.textContent = r.ok ? r.value : r.error;
+    }
+
+    input.addEventListener('input', run);
+    titleInput.addEventListener('input', run);
+    panel.appendChild(block('样例', input));
+    panel.appendChild(row(titleInput, draft, copyBtn(function () { return result.textContent; })));
+    panel.appendChild(block('JSON Schema', result));
+    run();
+  };
+
+  VIEWS.sql = async function (panel) {
+    var fmt = await core('sqlfmt.js');
+    var input = area('粘贴 SQL…');
+    input.value = "select u.id, u.name, count(o.id) as orders from users u left join orders o on o.user_id = u.id where u.created_at > '2024-01-01' and o.status = 'paid' group by u.id, u.name order by orders desc limit 20;";
+    var caseMode = picker([['upper', '关键字大写'], ['keep', '保持原样']], 'upper', run);
+    var result = out('');
+    var status = h('div', { class: 'muted' });
+
+    function run() {
+      var r = fmt.formatSql(input.value, { uppercase: caseMode.value === 'upper' });
+      result.textContent = r.ok ? r.value : r.error;
+      status.textContent = r.ok
+        ? '只调整空白与关键字大小写，字符串、标识符和注释按原样保留。'
+        : '格式化失败，原因见结果区。';
+    }
+
+    input.addEventListener('input', run);
+    panel.appendChild(block('输入', input));
+    panel.appendChild(row(caseMode, copyBtn(function () { return result.textContent; })));
+    panel.appendChild(block('结果', result));
+    panel.appendChild(status);
+    run();
+  };
+
+  VIEWS.xml = async function (panel) {
+    var fmt = await core('format.js');
+    var input = area('粘贴 XML…');
+    input.value = '<config><server host="0.0.0.0" port="8080"><route path="/api">api</route><route path="/web">web</route></server></config>';
+    var result = out('');
+    var status = h('div', { class: 'muted' });
+
+    function show(r) {
+      result.textContent = r.ok ? r.value : r.error;
+      status.textContent = r.ok ? '' : '处理失败，原因见结果区。';
+    }
+
+    panel.appendChild(block('输入', input));
+    panel.appendChild(row(
+      btn('格式化', function () { show(fmt.formatXml(input.value, 2)); }, true),
+      btn('压缩', function () { show(fmt.minifyXml(input.value)); }),
+      copyBtn(function () { return result.textContent; })
+    ));
+    panel.appendChild(block('结果', result));
+    panel.appendChild(status);
+    show(fmt.formatXml(input.value, 2));
+  };
+
   var cleanup = null;
   var renderSeq = 0;
 

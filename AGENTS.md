@@ -156,7 +156,7 @@ import { page, card, btn, field, table, badge, notice, emptyState, loginCard } f
 
 ### 3.2 目录要按 100+ 工具设计
 
-门户当前 38 个工具，目标是 100+。**渲染全部工具，不分页**（分页和搜索框互相打架：你没法搜索没渲染出来的东西），真正会先崩的是"找起来"。
+门户当前 46 个工具，目标是 100+。**渲染全部工具，不分页**（分页和搜索框互相打架：你没法搜索没渲染出来的东西），真正会先崩的是"找起来"。
 
 因此门户有四个机制，加新工具时必须沿用：
 
@@ -626,7 +626,9 @@ const res = await stub.fetch(new URL("https://do/?op=inc"));
 
 ### 工具函数库 `src/toolkit-core`
 
-浏览器工具的纯函数层，从 it-toolbox（MIT）移植而来，见该目录的 `LICENSE-NOTICE`。三条铁律：不碰 DOM、不引 npm 包、不用 `node:` 内置模块。`crypto` / `TextEncoder` / `atob` / `btoa` 在两边都是全局量，可以用。
+浏览器工具的纯函数层。`encoding` / `crypto` / `text` / `number` / `format` / `color` / `network` / `datetime` / `generator` / `regex` 从 it-toolbox（MIT）移植，见该目录的 `LICENSE-NOTICE`；`yaml` / `toml` / `csv` / `jsonpath` / `schema` / `sqlfmt` 是为 xentool 新写的，没有上游。
+
+三条铁律对两类文件都成立：不碰 DOM、不引 npm 包、不用 `node:` 内置模块。`crypto` / `TextEncoder` / `atob` / `btoa` 在两边都是全局量，可以用。想加依赖先想清楚：`/core/*.js` 是原样发给浏览器的，没有打包器来 tree-shake，一个 npm 包会原封不动地变成首屏字节。
 
 改完 `.js` 必须重新生成分发副本，否则线上跑的还是旧代码：
 
@@ -688,7 +690,7 @@ const { convertCase } = await import('/core/text.js');
 
 ```bash
 npm test               # 必须全绿，一个都不能跳
-npm run deploy:dry     # 看包体积有没有异常膨胀（当前 ~363 KiB / gzip ~94 KiB）
+npm run deploy:dry     # 看包体积有没有异常膨胀（当前 ~446 KiB / gzip ~115 KiB）
 npm run probe          # 多视口布局探测（需先起 dev server）
 npm run drawer         # 工作台抽屉：导航可见 + 焦点被困住
 npm run portal         # 门户：搜索 / 计数 / 视图切换

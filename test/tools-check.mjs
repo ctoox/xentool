@@ -43,6 +43,14 @@ const EXPECT = new Map([
   ["urlparse", "/a/b"],
   ["httpcode", "404"],
   ["mime", "application/json"],
+  ["yaml", "\"name\": \"xentool\""],
+  ["toml", "127.0.0.1"],
+  ["csv", "Ada, L"],
+  ["jsonpath", "$.store.book[0].author"],
+  ["j2ts", "export interface Address"],
+  ["jsonschema", "json-schema.org/draft/2020-12"],
+  ["xml", "<server"],
+  ["sql", "LEFT JOIN"],
 ]);
 
 const browser = BROWSERS.find((p) => existsSync(p));

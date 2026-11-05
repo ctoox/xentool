@@ -11,6 +11,7 @@
  */
 export const CATEGORIES = [
   { id: "encode", name: "编码转换" },
+  { id: "data", name: "数据格式" },
   { id: "dev", name: "开发辅助" },
   { id: "net", name: "网络" },
   { id: "text", name: "文本处理" },
@@ -45,4 +46,12 @@ export const TOOLKIT = [
   { id: "urlparse", name: "URL 解析", desc: "拆出协议、主机、端口、路径、查询参数与锚点。", category: "net" },
   { id: "httpcode", name: "HTTP 状态码", desc: "按码或关键字查含义与常见原因。", category: "net" },
   { id: "mime", name: "MIME 类型", desc: "按扩展名或类型名查 Content-Type。", category: "net" },
+  { id: "yaml", name: "YAML 转 JSON", desc: "配置文件双向转换，支持多文档、块标量与行内集合。", category: "data" },
+  { id: "toml", name: "TOML 转 JSON", desc: "Cargo、pyproject 那类配置，转成 JSON 看结构。", category: "data" },
+  { id: "csv", name: "CSV 转 JSON", desc: "自动识别分隔符，引号、换行与转义按 RFC 4180 处理。", category: "data" },
+  { id: "jsonpath", name: "JSONPath 查询", desc: "用过滤表达式从 JSON 取数，并给出每个结果所在的路径。", category: "data" },
+  { id: "j2ts", name: "JSON 转 TypeScript", desc: "按样例生成 interface，缺失字段自动标为可选。", category: "data" },
+  { id: "jsonschema", name: "JSON Schema", desc: "从样例生成 draft 2020-12 或 draft-07 的 Schema。", category: "data" },
+  { id: "xml", name: "XML 格式化", desc: "缩进或压缩 XML，保留文本内容与属性顺序。", category: "data" },
+  { id: "sql", name: "SQL 格式化", desc: "子句换行、关键字大写，字符串与注释原样保留。", category: "dev" },
 ];
