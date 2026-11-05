@@ -121,6 +121,22 @@ export function select({ label = "", name = "", id = "", options = [], value = "
   );
   const current = items.find((item) => String(item.value) === String(value)) || items[0] || { value: "", label: "" };
 
+  /*
+   * The trigger is as wide as its widest option, not as wide as the value it
+   * happens to show: a box that stretches when the user picks 30 天 and shrinks
+   * back on 1 天 drags the rest of the row with it.
+   *
+   * Every label is rendered invisibly into the same grid cell as the visible
+   * value, so the browser's own text metrics decide the width: the cell is as
+   * wide as its widest child and the trigger never reflows. This replaced a
+   * character-count estimate (CJK counts double) that agreed with the rendered
+   * width on every current option list and still jumped 25px for a label like
+   * WWWWW against 七七八 — guessing at text width is the bug, not the numbers.
+   */
+  const sizers = items
+    .map((item) => `<span class="x-picker__sizer" aria-hidden="true">${escapeHtml(item.label)}</span>`)
+    .join("");
+
   const nativeOptions = items
     .map(
       (item) =>
@@ -128,10 +144,36 @@ export function select({ label = "", name = "", id = "", options = [], value = "
     )
     .join("");
 
+  /*
+   * The tick ships in every row and only the selected one reveals it, so all
+   * labels keep one left edge and one right edge.
+   *
+   * The label sits in its own span because text-overflow only ellipsises
+   * element content — an anonymous text node in a flex row cannot be
+   * truncated, so a long option used to widen the row instead of clipping, and
+   * on a 320px screen it pushed the row (and its tick) off the edge. The full
+   * text stays in title for whoever needs the rest; the span keeps no
+   * whitespace around it, because shell.js mirrors the option textContent into
+   * the trigger and a stray space would ride along with it.
+   *
+   * Options carry ids so shell.js can point aria-activedescendant at the
+   * keyboard highlight: a class alone is invisible to a screen reader.
+   */
   const menuItems = items
-    .map(
-      (item, index) =>
-        `<div class="x-picker__option" role="option" tabindex="-1" data-value="${escapeHtml(item.value)}" data-index="${index}" aria-selected="${String(item.value) === String(current.value)}">${escapeHtml(item.label)}</div>`,
+    .map((item, index) =>
+      `<div${attrs({
+        class: "x-picker__option",
+        role: "option",
+        tabindex: "-1",
+        id: inputId ? `${inputId}-opt-${index}` : undefined,
+        title: item.label,
+        "data-value": item.value,
+        "data-index": index,
+        // A string, not a boolean: attrs() renders a bare attribute for true,
+        // and aria-selected="" is not "true" — the tick and the announced
+        // state both hang off the literal value.
+        "aria-selected": String(item.value) === String(current.value) ? "true" : "false",
+      })}><span class="x-picker__text">${escapeHtml(item.label)}</span><svg class="x-picker__check" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6L9 17l-5-5"/></svg></div>`,
     )
     .join("");
 
@@ -142,14 +184,34 @@ export function select({ label = "", name = "", id = "", options = [], value = "
    *
    * The wrapper is a div, not a label: a label forwards clicks on any child to
    * the button, so choosing an option would immediately reopen the menu.
+   *
+   * The native select is not marked inert here. tabindex="-1" and
+   * aria-hidden="true" in the server output would leave a JS-less visitor with
+   * a dropdown that Tab skips and a screen reader never announces — the two
+   * attributes only become true once shell.js has actually drawn the button,
+   * so it adds them at that moment.
+   *
+   * Naming: aria-labelledby overrides the button's own text, so pointing it at
+   * the label alone announced "过期时间" and swallowed "7 天". It names the
+   * label and then the value span, in that order — a name read as
+   * "过期时间 7 天". Without a label there is nothing to point at, and the
+   * value in the button's content already contributes to the name, so that
+   * branch keeps the static "选项".
    */
+  const labelled = label && labelId ? labelId : "";
+  const valueId = inputId ? `${inputId}-value` : "";
+  const menuId = inputId ? `${inputId}-menu` : "";
+  const buttonName = labelled
+    ? { "aria-labelledby": valueId ? `${labelled} ${valueId}` : labelled }
+    : { "aria-label": "选项" };
+
   const control = `<span class="x-select-wrap">
-  <select class="x-select-native"${attrs({ id: inputId || undefined, name: name || undefined, tabindex: "-1", "aria-hidden": "true", ...extra })}>${nativeOptions}</select>
-  <button type="button" class="x-picker"${attrs({ "aria-haspopup": "listbox", "aria-expanded": "false", ...(label ? { "aria-labelledby": labelId } : { "aria-label": "选项" }), id: inputId ? `${inputId}-btn` : undefined })}>
-    <span class="x-picker__value">${escapeHtml(current.label)}</span>
-    <svg class="x-picker__caret" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
+  <select class="x-select-native"${attrs({ id: inputId || undefined, name: name || undefined, ...extra })}>${nativeOptions}</select>
+  <button type="button" class="x-picker"${attrs({ "aria-haspopup": "listbox", "aria-expanded": "false", "aria-controls": menuId || undefined, ...buttonName, id: inputId ? `${inputId}-btn` : undefined })}>
+    <span class="x-picker__label"><span class="x-picker__value"${attrs({ id: valueId || undefined })}>${escapeHtml(current.label)}</span>${sizers}</span>
+    <svg class="x-picker__caret" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9.5l6 6 6-6"/></svg>
   </button>
-  <div class="x-picker__menu" role="listbox"${attrs({ "aria-labelledby": label ? labelId : undefined, "aria-label": label ? undefined : "选项" })} hidden>${menuItems}</div>
+  <div class="x-picker__menu" role="listbox"${attrs({ id: menuId || undefined, "aria-labelledby": labelled || undefined, "aria-label": labelled ? undefined : "选项" })} hidden>${menuItems}</div>
 </span>`;
 
   if (!label) return control;

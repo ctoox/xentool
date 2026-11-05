@@ -93,7 +93,7 @@ const SELECT_SCRIPT = String.raw`
     });
   }
 
-  wraps.forEach(function (wrap) {
+  wraps.forEach(function (wrap, wrapIndex) {
     var native = wrap.querySelector('select');
     var button = wrap.querySelector('.x-picker');
     var menu = wrap.querySelector('.x-picker__menu');
@@ -103,6 +103,27 @@ const SELECT_SCRIPT = String.raw`
     var options = Array.prototype.slice.call(menu.querySelectorAll('[role="option"]'));
     var active = -1;
     wrap.classList.add('is-enhanced');
+
+    /*
+     * Only now is the button real: a browser without JS gets the native select
+     * as its control, focusable and announced, exactly as the markup says. The
+     * inert pair belongs to the enhanced state, not to the HTML.
+     */
+    native.tabIndex = -1;
+    native.setAttribute('aria-hidden', 'true');
+
+    /*
+     * components.js ids the menu and its options from the field id. A caller
+     * that omitted the id still needs targets for aria-controls and
+     * aria-activedescendant, so fill in a document-unique namespace here
+     * rather than emitting ids like "-opt-0" that would collide.
+     */
+    if (!menu.id) {
+      var ns = button.id ? button.id.replace(/-btn$/, '') : 'x-picker-' + (wrapIndex + 1);
+      menu.id = ns + '-menu';
+      options.forEach(function (option, i) { if (!option.id) option.id = ns + '-opt-' + i; });
+    }
+    if (!button.hasAttribute('aria-controls')) button.setAttribute('aria-controls', menu.id);
 
     function selectedIndex() {
       for (var i = 0; i < options.length; i++) {
@@ -125,6 +146,10 @@ const SELECT_SCRIPT = String.raw`
       options.forEach(function (option, i) {
         option.classList.toggle('is-active', i === active);
       });
+      // The highlight is a class, and a class does not exist for a screen
+      // reader: activedescendant is what turns "arrow keys moved somewhere"
+      // into "3 of 5, 30 天".
+      button.setAttribute('aria-activedescendant', options[active].id);
       if (options[active].offsetTop + options[active].offsetHeight > menu.scrollTop + menu.clientHeight) {
         options[active].scrollIntoView({ block: 'nearest' });
       }
@@ -132,9 +157,16 @@ const SELECT_SCRIPT = String.raw`
 
     function place() {
       var rect = button.getBoundingClientRect();
-      var width = Math.max(rect.width, 150);
-      menu.style.minWidth = width + 'px';
-      menu.style.left = Math.max(8, Math.min(rect.left, window.innerWidth - width - 8)) + 'px';
+      /*
+       * The menu is at least as wide as the trigger it hangs off, and grows
+       * past it when an option label is longer. A fixed 150px floor made a
+       * 90px trigger open a 150px panel, which reads as two unrelated
+       * widgets; measuring after the min-width lands keeps the clamp below
+       * honest about the width the user actually sees.
+       */
+      menu.style.minWidth = rect.width + "px";
+      var width = menu.offsetWidth;
+      menu.style.left = Math.max(8, Math.min(rect.left, window.innerWidth - width - 8)) + "px";
 
       var below = window.innerHeight - rect.bottom - 8;
       var height = menu.offsetHeight;
@@ -160,6 +192,8 @@ const SELECT_SCRIPT = String.raw`
     function close(returnFocus) {
       menu.hidden = true;
       button.setAttribute('aria-expanded', 'false');
+      // A closed list has no highlight, so it must not keep pointing at one.
+      button.removeAttribute('aria-activedescendant');
       wrap.classList.remove('is-open');
       active = -1;
       if (menu.parentNode !== wrap) wrap.appendChild(menu);
@@ -193,7 +227,14 @@ const SELECT_SCRIPT = String.raw`
       var key = event.key;
       if (key === 'ArrowDown' || key === 'ArrowUp') {
         event.preventDefault();
-        if (menu.hidden) open();
+        /*
+         * Opening and moving are two different intentions. open() already
+         * parks the highlight on the current value, so an arrow that both
+         * opened the menu and advanced would land on the neighbour — the user
+         * presses Enter to confirm 7 天 and submits 1 天. First arrow opens and
+         * stays put (the select-only convention); the next one moves.
+         */
+        if (menu.hidden) { open(); return; }
         setActive(active < 0 ? selectedIndex() : active + (key === 'ArrowDown' ? 1 : -1));
         return;
       }

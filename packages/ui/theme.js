@@ -89,7 +89,12 @@ export const COMPONENTS = String.raw`
 .x-field__hint{margin:7px 0 0;font-size:12px;color:var(--dim);line-height:1.55}
 .x-field__hint code{font-family:ui-monospace,monospace;font-size:11.5px;color:var(--ink-2);background:var(--surface-2);padding:1px 5px;border-radius:5px}
 .x-check{display:inline-flex;align-items:center;gap:8px;font-size:13px;color:var(--ink-2);cursor:pointer;user-select:none;white-space:nowrap}
-.x-check input{width:15px;height:15px;accent-color:#22d3ee;cursor:pointer;margin:0}
+/*
+ * color-scheme:dark is not cosmetic. Without it the UA paints the unchecked
+ * box as a light-mode control — a near-white 15px square — which next to a
+ * dark picker becomes the loudest thing in the row.
+ */
+.x-check input{width:15px;height:15px;accent-color:#22d3ee;color-scheme:dark;cursor:pointer;margin:0}
 
 /* --------------------------------------------------------------- picker */
 /*
@@ -98,26 +103,105 @@ export const COMPONENTS = String.raw`
  * control can be styled, the open one cannot — so the control is redrawn and
  * the real select stays in the DOM (hidden, still holding the value) for form
  * submission and for anyone with JS disabled.
+ *
+ * Read it as an inline value selector, not as a text field. A field is a well
+ * you pour text into, so it is wide, recessed and quiet; a value selector is a
+ * pill that states one fact, so it is as wide as its widest option and no
+ * wider, it sits on a raised surface, and the value carries the weight while
+ * the chevron drops to a hint. The previous version was 150px wide around two
+ * characters of text — that silhouette reads as an empty form control, which
+ * is why it looked wrong no matter which border colour it wore.
+ *
+ * Sizing is done by .x-picker__sizer (components.js renders every option label
+ * invisibly into the same grid cell as the visible value, so the browser's own
+ * text metrics decide the width), and the trigger never reflows when the value
+ * changes from 1 天 to 30 天.
  */
-.x-select-wrap{position:relative;display:inline-block;max-width:100%}
-.x-select-native{width:100%;border:1px solid var(--line-2);border-radius:var(--r-sm);background:rgba(0,0,0,.32);color:var(--ink);font:var(--field-fs)/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC",sans-serif;padding:0 13px;height:40px}
+.x-select-wrap{position:relative;display:inline-block;max-width:100%;vertical-align:middle}
+/* The no-JS fallback wears the same material as the picker it stands in for. */
+.x-select-native{width:100%;border:1px solid var(--line-2);border-radius:10px;background:rgba(255,255,255,.05);color:var(--ink);font:500 var(--field-fs)/1.2 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC",sans-serif;padding:0 13px;height:40px}
+/*
+ * Only reachable without JS: shell.js sets tabindex="-1" on the native select
+ * the moment it enhances, so an enhanced page never focuses it. That makes it
+ * the one control on the site that would otherwise wear the UA's near-white
+ * focus ring instead of the site's, and it is the first thing a JS-less
+ * keyboard user meets — the same 2px cyan ring .x-picker, .x-back and .x-chip
+ * already use, or none at all.
+ */
+.x-select-native:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
 .x-select-wrap.is-enhanced .x-select-native{position:absolute;inset:0;opacity:0;pointer-events:none}
 .x-select-wrap.is-enhanced .x-picker{display:inline-flex}
-.x-picker{display:none;align-items:center;justify-content:space-between;gap:12px;min-width:150px;height:40px;padding:0 11px 0 13px;border:1px solid var(--line-2);border-radius:var(--r-sm);background:rgba(0,0,0,.32);color:var(--ink);font:var(--field-fs)/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC",sans-serif;cursor:pointer;text-align:left;transition:border-color .16s var(--ease),background .16s var(--ease),box-shadow .16s var(--ease)}
-.x-picker:hover{border-color:rgba(255,255,255,.22);background:rgba(255,255,255,.05)}
-.x-picker[aria-expanded="true"],.x-picker:focus-visible{outline:none;border-color:rgba(34,211,238,.55);box-shadow:var(--sh-glow);background:rgba(0,0,0,.45)}
+.x-picker{display:none;align-items:center;gap:8px;max-width:100%;height:40px;padding:0 10px 0 13px;border:1px solid var(--line-2);border-radius:10px;background:rgba(255,255,255,.05);color:var(--ink);font:500 var(--field-fs)/1.2 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC",sans-serif;font-variant-numeric:tabular-nums;cursor:pointer;text-align:left;transition:border-color .16s var(--ease),background .16s var(--ease),box-shadow .16s var(--ease)}
+.x-picker:hover{border-color:rgba(255,255,255,.22);background:rgba(255,255,255,.08)}
+/*
+ * Two separate signals, deliberately not merged into one rule:
+ *   expanded = the object's state  -> its own border goes cyan, surface tints
+ *   focus    = where the keyboard is -> a ring outside the control, the same
+ *              2px cyan outline .x-back and .x-chip already use.
+ * The old merged rule tinted the border to 2.01:1 against the resting border
+ * and leaned on a 1.19:1 glow, which WCAG 2.2 SC 2.4.11 scores as "no visible
+ * focus" even though a pixel had changed. An outline is 7:1 against the page
+ * and matches the rest of the site, so the two states no longer compete for
+ * the same few pixels. Pointer users never see the ring: :focus-visible does
+ * not match after a click, so a mouse-opened menu stays as quiet as before.
+ */
+.x-picker[aria-expanded="true"]{border-color:rgba(34,211,238,.5);box-shadow:var(--sh-glow);background:rgba(34,211,238,.07)}
+.x-picker:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
+.x-picker__label{display:grid;min-width:0;text-align:left}
+.x-picker__label>*{grid-area:1/1;min-width:0}
 .x-picker__value{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.x-picker__caret{width:14px;height:14px;flex:none;fill:none;stroke:var(--dim);stroke-width:2;stroke-linecap:round;stroke-linejoin:round;transition:transform .18s var(--ease),stroke .18s var(--ease)}
+.x-picker__sizer{visibility:hidden;white-space:nowrap;pointer-events:none}
+.x-picker__caret{width:15px;height:15px;flex:none;fill:none;stroke:var(--dim);stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round;transition:transform .18s var(--ease),stroke .18s var(--ease)}
+.x-picker:hover .x-picker__caret{stroke:var(--ink-2)}
 .x-picker[aria-expanded="true"] .x-picker__caret{transform:rotate(180deg);stroke:#22d3ee}
-.x-picker__menu{position:fixed;z-index:80;top:0;left:0;min-width:150px;max-height:280px;overflow:auto;padding:6px;border:1px solid var(--line-2);border-radius:12px;background:#0d1119;box-shadow:0 24px 48px -24px rgba(0,0,0,.95),0 2px 10px rgba(0,0,0,.45);animation:x-pop .14s var(--ease)}
+/*
+ * The menu is built from the same material as the trigger — a translucent
+ * white wash over an opaque base, the recipe .x-card already uses — so opening
+ * it reads as one object changing state instead of a different widget sliding
+ * out. The base is opaque because the panel floats over page copy, and the
+ * radius, border and fill are the trigger's, so the 5px inset and the 6px
+ * option radius nest the corners instead of leaving them to fight. Option
+ * padding puts option text on the same left edge as the value inside the
+ * trigger: the current value should look like it dropped into the list.
+ *
+ * The max-width is not decoration. Options are single-line, so a long label
+ * made the panel wider than the phone: body{overflow-x:hidden} then cropped
+ * it, and the tail of every label — plus the tick at the row's right edge —
+ * was painted outside the viewport with no way to scroll to it.
+ */
+.x-picker__menu{position:fixed;z-index:80;top:0;left:0;max-width:calc(100vw - 16px);max-height:288px;overflow:auto;overscroll-behavior:contain;padding:5px;border:1px solid var(--line-2);border-radius:10px;background:linear-gradient(180deg,rgba(255,255,255,.06),rgba(255,255,255,.02)),#0e1118;box-shadow:0 16px 34px -18px rgba(0,0,0,.95),0 2px 8px rgba(0,0,0,.5),inset 0 1px 0 rgba(255,255,255,.055);animation:x-pop .13s var(--ease)}
 .x-picker__menu[hidden]{display:none}
 @keyframes x-pop{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}
-.x-picker__option{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:9px 11px;border-radius:8px;font-size:13px;color:var(--ink-2);cursor:pointer;white-space:nowrap}
-.x-picker__option:hover,.x-picker__option.is-active{background:rgba(255,255,255,.07);color:var(--ink)}
-.x-picker__option[aria-selected="true"]{color:var(--ink);background:rgba(34,211,238,.13)}
-.x-picker__option[aria-selected="true"]::after{content:"";width:6px;height:6px;border-radius:50%;background:#22d3ee;flex:none}
-@media (max-width:640px){.x-picker__menu{min-width:190px}}
-@media (prefers-reduced-motion:reduce){.x-picker__menu{animation:none}.x-picker__caret{transition:none}}
+/*
+ * Option type is derived from the field scale rather than frozen at 13.5px.
+ * At 13.5px flat, a touch viewport rendered a 16px value in the trigger above
+ * 13.5px rows in the list — the list looked like the smaller, less important
+ * of the two, which inverts "the value dropped into the list". The rows now
+ * track the trigger at every breakpoint: half a pixel under it on a fine
+ * pointer (13.5px desktop, 15.5px tablet) and exactly --field-fs on a coarse
+ * one, so a finger reads the list at the same size as the value it just
+ * tapped.
+ */
+.x-picker__option{display:flex;align-items:center;justify-content:space-between;gap:8px;height:34px;padding:0 8px;border-radius:6px;font-size:calc(var(--field-fs) - .5px);line-height:1.2;color:var(--ink-2);font-variant-numeric:tabular-nums;cursor:pointer;white-space:nowrap}
+/*
+ * The label is a span, not a bare text node, because text-overflow has no
+ * effect on anonymous flex content: a long option simply widened the row, and
+ * once the menu grew a max-width the text was clipped mid-glyph with the tick
+ * pushed out of view. min-width:0 lets the span shrink under its content
+ * width, flex lets it keep the space the tick does not use, and the full label
+ * rides along in the element's title.
+ */
+.x-picker__text{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1 1 auto}
+.x-picker__option:hover,.x-picker__option.is-active{background:rgba(255,255,255,.06);color:var(--ink)}
+.x-picker__option[aria-selected="true"]{color:var(--ink);background:rgba(34,211,238,.11)}
+/*
+ * The checkmark is always in the DOM and only fades in, so the labels of all
+ * options share one left edge and one right edge. The old 6px dot read as an
+ * unloaded radio; a tick says "this is the current value" without a legend.
+ */
+.x-picker__check{width:14px;height:14px;flex:none;fill:none;stroke:var(--cyan);stroke-width:2.4;stroke-linecap:round;stroke-linejoin:round;opacity:0;transition:opacity .12s var(--ease)}
+.x-picker__option[aria-selected="true"] .x-picker__check{opacity:1}
+@media (prefers-reduced-motion:reduce){.x-picker__menu{animation:none}.x-picker__caret,.x-picker__check{transition:none}}
 
 /* ---------------------------------------------------------------- badge */
 .x-badge{display:inline-flex;align-items:center;gap:6px;height:22px;padding:0 9px;border-radius:999px;font:500 11.5px/1 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;letter-spacing:.01em;border:1px solid transparent;white-space:nowrap}
@@ -203,6 +287,22 @@ main.wide{max-width:1120px}
 .x-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
 .x-row--between{justify-content:space-between}
 .x-row .x-field{margin:0}
+/*
+ * A row that carries a labelled field has two baselines: the label's top and
+ * the control's bottom. Centring the neighbours against the whole field puts
+ * them half a label too high — the primary button sat 12px above the picker's
+ * centre in the row this component lives in. Bottom-aligning the row puts
+ * every control on one line (the difference left is the 40px control against
+ * the 36px button, which reads as the same line). The admin page already
+ * worked around this with an inline align-items on its own row.
+ */
+.x-row:has(.x-field__label){align-items:flex-end}
+/*
+ * The checkbox is short, so bottom alignment alone is not enough: it needs the
+ * control's height for its centre to land on the same line. It also hands a
+ * mouse user the 40px target a finger gets.
+ */
+.x-row .x-check{align-self:flex-end;height:40px;margin:0}
 .x-row .x-field .x-input,.x-row .x-field .x-select{width:auto;min-width:120px}
 .x-grid{display:grid;gap:14px;grid-template-columns:repeat(auto-fill,minmax(252px,1fr))}
 .x-toolbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:11px 14px;border:1px solid var(--line);border-radius:var(--r);background:var(--surface)}
@@ -382,6 +482,10 @@ main.wide{max-width:1120px}
   .x-tab,.x-chip,.x-view-toggle button{height:var(--tap)}
   .x-back{height:var(--tap)}
   .x-input,.x-select{height:var(--tap)}
+  /* The trigger and its rows are the two things a finger has to hit. */
+  .x-picker{height:var(--tap);padding:0 12px 0 14px}
+  .x-picker__option{height:var(--tap);font-size:var(--field-fs)}
+  .x-row .x-check{height:var(--tap)}
   .x-check{min-height:var(--tap)}
   .x-check input{width:20px;height:20px}
   .x-top__inner{height:64px}
