@@ -46,7 +46,7 @@ test("portal renders a complete standalone page", async () => {
   assert.match(html, /rel="icon"/);
   assert.match(html, /theme-color/);
   assert.doesNotMatch(html, /<script src=/);
-  assert.equal(body.tools.length, 46);
+  assert.equal(body.tools.length, 52);
   assert.equal(body.tools.filter((t) => t.status === "planned").length, 1);
 });
 

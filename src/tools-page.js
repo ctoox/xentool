@@ -1481,6 +1481,292 @@ const CLIENT_JS = String.raw`
     show(fmt.formatXml(input.value, 2));
   };
 
+  /* ---------------------------------------------------------------- */
+  /* Security and media                                                */
+  /* ---------------------------------------------------------------- */
+
+  VIEWS.aes = async function (panel) {
+    var c = await core('crypto.js');
+    var input = area('要加密的文本，或粘贴一段密文…');
+    input.value = '这是一段只在浏览器里加密的文本。';
+    var password = line('口令（不会发往任何服务器）', 'correct horse battery staple');
+    var result = out('');
+    var status = h('div', { class: 'muted' });
+
+    function run(mode) {
+      if (!password.value) {
+        status.textContent = '口令不能为空：同一口令才能解回原文。';
+        return;
+      }
+      status.textContent = '计算中…';
+      var task = mode === 'decrypt'
+        ? c.aesDecrypt(input.value.trim(), password.value)
+        : c.aesEncrypt(input.value, password.value);
+      Promise.resolve(task).then(function (r) {
+        result.textContent = r.ok ? r.value : r.error;
+        status.textContent = r.ok
+          ? (mode === 'decrypt'
+            ? '解密完成。口令不对时会直接报错，不会给出错误结果。'
+            : '加密完成。密文是 Base64，前 16 字节是盐、接着 12 字节是 IV。')
+          : '失败，原因见结果区。';
+      });
+    }
+
+    panel.appendChild(block('输入', input));
+    panel.appendChild(block('口令', password));
+    panel.appendChild(row(
+      btn('加密', function () { run('encrypt'); }, true),
+      btn('解密', function () { run('decrypt'); }),
+      copyBtn(function () { return result.textContent; })
+    ));
+    panel.appendChild(block('结果', result));
+    panel.appendChild(status);
+    run('encrypt');
+  };
+
+  VIEWS.hmac = async function (panel) {
+    var c = await core('crypto.js');
+    var message = area('消息内容…');
+    message.value = 'hello';
+    var secret = line('密钥', 'secret');
+    var algo = picker([['sha256', 'HMAC-SHA256'], ['sha512', 'HMAC-SHA512']], 'sha256', run);
+    var result = out('');
+    var status = h('div', { class: 'muted' });
+
+    function run() {
+      var task = algo.value === 'sha512' ? c.hmacSha512(message.value, secret.value) : c.hmacSha256(message.value, secret.value);
+      Promise.resolve(task).then(function (r) {
+        result.textContent = r.ok ? r.value : r.error;
+        status.textContent = r.ok
+          ? (algo.value === 'sha512' ? '输出 128 个十六进制字符。' : '输出 64 个十六进制字符。')
+          : '签名失败，原因见结果区。';
+      });
+    }
+
+    message.addEventListener('input', run);
+    secret.addEventListener('input', run);
+    panel.appendChild(block('消息', message));
+    panel.appendChild(row(secret, algo, copyBtn(function () { return result.textContent; })));
+    panel.appendChild(block('签名', result));
+    panel.appendChild(status);
+    run();
+  };
+
+  VIEWS.keys = async function (panel) {
+    var c = await core('crypto.js');
+    var type = picker([['ed25519', 'Ed25519（快）'], ['rsa', 'RSA 4096（慢）']], 'ed25519', run);
+    var pub = out('');
+    var priv = out('');
+    var status = h('div', { class: 'muted' });
+    var running = false;
+
+    function run() {
+      if (running) return;
+      running = true;
+      status.textContent = type.value === 'rsa' ? '生成中… RSA 4096 可能要十几秒，别关页面。' : '生成中…';
+
+      c.generateSshKeyPair(type.value).then(function (r) {
+        running = false;
+        if (!r.ok) {
+          pub.textContent = '';
+          priv.textContent = '';
+          status.textContent = r.error;
+          return;
+        }
+        pub.textContent = r.value.publicKey;
+        priv.textContent = r.value.privateKey;
+        status.textContent = '指纹 ' + r.value.fingerprint + '。私钥只在这个页面里，刷新就没了，请先复制走。';
+      });
+    }
+
+    function download(text, name) {
+      var blob = new Blob([text], { type: 'text/plain' });
+      var url = URL.createObjectURL(blob);
+      var a = h('a', { href: url, download: name });
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+    }
+
+    panel.appendChild(row(type, btn('重新生成', run, true), btn('下载公钥', function () { download(pub.textContent, 'id_' + type.value + '.pub'); }), btn('下载私钥', function () { download(priv.textContent, 'id_' + type.value); })));
+    panel.appendChild(block('公钥', pub));
+    panel.appendChild(block('私钥', priv));
+    panel.appendChild(status);
+    run();
+  };
+
+  VIEWS.password = async function (panel) {
+    var g = await core('generator.js');
+    var length = line('长度', '20', 'number');
+    var count = picker([['1', '1 个'], ['5', '5 个'], ['10', '10 个']], '5', run);
+
+    function check(label, on) {
+      var box = h('input', { type: 'checkbox' });
+      box.checked = on;
+      var wrap = h('label', { class: 'check' }, box, h('span', { text: label }));
+      return { box: box, node: wrap };
+    }
+
+    var upper = check('大写', true);
+    var lower = check('小写', true);
+    var numbers = check('数字', true);
+    var symbols = check('符号', true);
+    var similar = check('排除易混字符 0O1lI', true);
+    var table = h('table', { class: 'kv kv-data' });
+    var status = h('div', { class: 'muted' });
+
+    function run() {
+      var opts = {
+        length: Math.max(6, Math.min(64, Number(length.value) || 20)),
+        count: Number(count.value) || 5,
+        uppercase: upper.box.checked,
+        lowercase: lower.box.checked,
+        numbers: numbers.box.checked,
+        symbols: symbols.box.checked,
+        excludeSimilar: similar.box.checked
+      };
+      var r = g.generatePasswords(opts.count, opts);
+      table.replaceChildren();
+      if (!r.ok) {
+        status.textContent = r.error;
+        return;
+      }
+      var head = h('tr', {}, h('th', { text: '密码' }), h('th', { text: '强度' }), h('th', { text: '估算破解耗时' }));
+      table.appendChild(head);
+      for (var i = 0; i < r.value.length; i++) {
+        var pwd = r.value[i];
+        var s = g.checkPasswordStrength(pwd);
+        table.appendChild(h('tr', {},
+          h('td', { text: pwd }),
+          h('td', { text: s.label }),
+          h('td', { text: s.crackTime })
+        ));
+      }
+      status.textContent = '用 Web Crypto 取随机数，不是 Math.random()。估算按每秒 100 亿次猜测。';
+    }
+
+    length.addEventListener('input', run);
+    panel.appendChild(row(length, count));
+    panel.appendChild(row(upper.node, lower.node, numbers.node, symbols.node, similar.node));
+    panel.appendChild(row(btn('重新生成', run, true)));
+    panel.appendChild(block('结果', table));
+    panel.appendChild(status);
+    run();
+  };
+
+  VIEWS.qrcode = async function (panel) {
+    var qr = await core('qrcode.js');
+    var input = area('链接、文本或 Wi-Fi 串…');
+    input.value = 'https://tool.xen.autos/tools';
+    var level = picker(qr.QR_LEVELS, 'M', run);
+    var scale = line('每格像素', '8', 'number');
+    var box = h('div', { class: 'qr-box' });
+    var status = h('div', { class: 'muted' });
+
+    function run() {
+      var r = qr.encodeQr(input.value, { level: level.value, scale: Number(scale.value) || 8 });
+      if (!r.ok) {
+        box.replaceChildren();
+        status.textContent = r.error;
+        return;
+      }
+      box.innerHTML = r.value.svg;
+      var kb = (new Blob([r.value.svg]).size / 1024).toFixed(1);
+      status.textContent = '版本 ' + r.value.version + '，' + r.value.moduleCount + '×' + r.value.moduleCount + ' 模块，SVG 约 ' + kb + ' KB。四角留白是扫描必需的静区。';
+    }
+
+    function download() {
+      var blob = new Blob([box.innerHTML], { type: 'image/svg+xml' });
+      var url = URL.createObjectURL(blob);
+      var a = h('a', { href: url, download: 'qrcode.svg' });
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+    }
+
+    input.addEventListener('input', run);
+    scale.addEventListener('input', run);
+    panel.appendChild(block('内容', input));
+    panel.appendChild(row(level, scale, btn('下载 SVG', download, true)));
+    panel.appendChild(block('预览', box));
+    panel.appendChild(status);
+    run();
+  };
+
+  VIEWS.image = function (panel) {
+    var fileInput = h('input', { class: 'input', type: 'file', accept: 'image/*' });
+    var maxWidth = line('最大宽度 px（留空保持原尺寸）', '1600', 'number');
+    var quality = line('质量 0.1 – 1.0', '0.82', 'number');
+    var format = picker([['image/webp', 'WebP'], ['image/jpeg', 'JPEG'], ['image/png', 'PNG']], 'image/webp', function () { convert(); });
+    var preview = h('div', { class: 'thumb' });
+    var status = h('div', { class: 'muted', text: '选一张图片，压缩全程在本地完成。' });
+    var link = h('a', { class: 'btn', href: '#', download: 'compressed' });
+    link.style.display = 'none';
+    var file = null;
+
+    function convert() {
+      if (!file) return;
+      status.textContent = '处理中…';
+
+      createImageBitmap(file).then(function (bitmap) {
+        var limit = Number(maxWidth.value);
+        var width = bitmap.width;
+        var height = bitmap.height;
+        if (limit > 0 && width > limit) {
+          height = Math.round((height * limit) / width);
+          width = limit;
+        }
+        var canvas = h('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        var ctx = canvas.getContext('2d');
+        ctx.imageSmoothingQuality = 'high';
+        ctx.drawImage(bitmap, 0, 0, width, height);
+        if (format.value === 'image/jpeg') {
+          // JPEG has no alpha; transparent pixels would otherwise turn black.
+          ctx.globalCompositeOperation = 'destination-over';
+          ctx.fillStyle = '#ffffff';
+          ctx.fillRect(0, 0, width, height);
+        }
+        var q = Math.min(1, Math.max(0.1, Number(quality.value) || 0.82));
+
+        return new Promise(function (resolve) {
+          canvas.toBlob(function (blob) { resolve({ blob: blob, width: width, height: height }); }, format.value, q);
+        });
+      }).then(function (out) {
+        if (!out || !out.blob) {
+          status.textContent = '这个格式在当前浏览器里不可用，换 WebP 或 JPEG 试试。';
+          return;
+        }
+        var before = (file.size / 1024).toFixed(0);
+        var after = (out.blob.size / 1024).toFixed(0);
+        var ratio = file.size ? Math.round((out.blob.size / file.size) * 100) : 0;
+        preview.replaceChildren(h('img', { src: URL.createObjectURL(out.blob), alt: '压缩结果' }));
+        link.href = URL.createObjectURL(out.blob);
+        link.download = 'compressed.' + format.value.split('/')[1];
+        link.style.display = '';
+        status.textContent = before + ' KB → ' + after + ' KB（原体积的 ' + ratio + '%），' + out.width + '×' + out.height + '。';
+      }).catch(function (err) {
+        status.textContent = '读取失败：' + err.message + '。换一张图片或换个浏览器试试。';
+      });
+    }
+
+    fileInput.addEventListener('change', function () {
+      file = fileInput.files && fileInput.files[0];
+      convert();
+    });
+    maxWidth.addEventListener('input', convert);
+    quality.addEventListener('input', convert);
+
+    panel.appendChild(block('图片', fileInput));
+    panel.appendChild(row(maxWidth, quality, format));
+    panel.appendChild(block('结果', preview));
+    panel.appendChild(row(link));
+    panel.appendChild(status);
+  };
+
   var cleanup = null;
   var renderSeq = 0;
 
@@ -1708,6 +1994,12 @@ h1{margin:0;font-size:23px;font-weight:600;letter-spacing:-.02em}
 .kv th{color:var(--dim);font-weight:500;white-space:nowrap;width:1%;background:rgba(255,255,255,.02)}
 .kv td{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;word-break:break-all}
 .kv-data tr:first-child th{background:rgba(255,255,255,.04);color:var(--ink-2);font-weight:600}
+  .check{display:inline-flex;align-items:center;gap:7px;font-size:13px;color:var(--ink-2);cursor:pointer;padding:6px 2px}
+  .check input{width:16px;height:16px;accent-color:#22d3ee;margin:0}
+  a.btn{text-decoration:none}
+  .qr-box{background:#fff;padding:12px;border-radius:12px;display:inline-block;max-width:100%;line-height:0}
+  .qr-box svg{display:block;width:auto;max-width:100%;height:auto;max-height:340px}
+  .thumb img{max-width:100%;border-radius:10px;display:block;border:1px solid var(--line)}
 .error{color:#fca5a5;font-size:13px;margin:8px 0 0}
 .swatch{width:38px;height:38px;border-radius:9px;border:1px solid var(--line);background:#22d3ee;flex:none}
 .md-split{display:grid;grid-template-columns:1fr 1fr;gap:14px}

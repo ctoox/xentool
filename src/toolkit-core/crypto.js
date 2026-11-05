@@ -315,7 +315,7 @@ async function aesEncrypt(plaintext, password) {
     combined.set(salt, 0);
     combined.set(iv, salt.length);
     combined.set(new Uint8Array(encrypted), salt.length + iv.length);
-    const base64 = btoa(String.fromCharCode(...combined));
+    const base64 = bytesToBase64(combined);
     return { ok: true, value: base64 };
   } catch (e) {
     return { ok: false, error: e.message };
@@ -430,8 +430,21 @@ function concat(...arrays) {
   }
   return out;
 }
+/*
+ * btoa(String.fromCharCode(...bytes)) overflows the call stack somewhere around
+ * 100 KB, which turned "encrypt a long note" into "Maximum call stack size
+ * exceeded". Chunking keeps the argument list small and the error message gone.
+ */
+function bytesToBase64(bytes) {
+  const chunk = 0x8000;
+  let binary = "";
+  for (let i = 0; i < bytes.length; i += chunk) {
+    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+  }
+  return btoa(binary);
+}
 function encodeBase64(bytes) {
-  return btoa(String.fromCharCode(...bytes));
+  return bytesToBase64(bytes);
 }
 async function buildEd25519Keys(keyPair) {
   const rawPub = new Uint8Array(await crypto.subtle.exportKey("raw", keyPair.publicKey));

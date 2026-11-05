@@ -4,7 +4,16 @@ License. The upstream TypeScript sources live in `packages/core/` of that
 repository; here the types have been stripped with esbuild and the npm
 dependencies (nanoid, ulid) replaced with local implementations.
 
+The file `qrcode.js` is vendored from qrcode-generator 2.0.4
+(https://github.com/kazuhikoarase/qrcode-generator), also MIT licensed:
+
+  Copyright (c) 2011 Kazuhiko Arase
+  https://opensource.org/licenses/mit-license.php
+
+The word "QR Code" is a registered trademark of DENSO WAVE INCORPORATED.
+
 ---------------------------------------------------------------------------
+
 MIT License
 
 Copyright (c) 2026 An

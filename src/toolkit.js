@@ -12,6 +12,8 @@
 export const CATEGORIES = [
   { id: "encode", name: "编码转换" },
   { id: "data", name: "数据格式" },
+  { id: "crypto", name: "加密安全" },
+  { id: "media", name: "图像与二维码" },
   { id: "dev", name: "开发辅助" },
   { id: "net", name: "网络" },
   { id: "text", name: "文本处理" },
@@ -54,4 +56,10 @@ export const TOOLKIT = [
   { id: "jsonschema", name: "JSON Schema", desc: "从样例生成 draft 2020-12 或 draft-07 的 Schema。", category: "data" },
   { id: "xml", name: "XML 格式化", desc: "缩进或压缩 XML，保留文本内容与属性顺序。", category: "data" },
   { id: "sql", name: "SQL 格式化", desc: "子句换行、关键字大写，字符串与注释原样保留。", category: "dev" },
+  { id: "aes", name: "AES 加解密", desc: "AES-GCM 加密文本，PBKDF2 派生密钥，盐与 IV 随密文一起走。", category: "crypto" },
+  { id: "hmac", name: "HMAC 签名", desc: "HMAC-SHA256 / SHA-512 十六进制签名，接口验签常用。", category: "crypto" },
+  { id: "keys", name: "密钥生成", desc: "生成 Ed25519 或 RSA 密钥对，输出 OpenSSH 私钥与公钥。", category: "crypto" },
+  { id: "password", name: "密码生成", desc: "批量随机密码，附强度评分与暴力破解耗时估算。", category: "crypto" },
+  { id: "qrcode", name: "二维码生成", desc: "文本或链接转 SVG 二维码，纠错等级与尺寸可调。", category: "media" },
+  { id: "image", name: "图片压缩", desc: "本地缩放并转 WebP / JPEG，不上传，直接对比体积。", category: "media" },
 ];
